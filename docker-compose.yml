@@ -11,6 +11,19 @@ services:
     networks:
       - squid_dev_network
 
+  modelhub-web:
+    image: node:20-alpine
+    container_name: modelhub-web-dev
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 3950"
+    ports:
+      - "127.0.0.1:3950:3950"
+    restart: unless-stopped
+    networks:
+      - squid_dev_network
+
 networks:
   squid_dev_network:
     external: true

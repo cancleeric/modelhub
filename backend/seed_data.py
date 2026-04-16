@@ -13,53 +13,50 @@ seed_data.py — ModelHub Phase 0 初始資料種子
 import sys
 import os
 
-# 讓 seed 腳本可以在容器外直接執行（指向本機 db）
-if "DATABASE_URL" not in os.environ:
-    os.environ.setdefault("MODELHUB_SEED_LOCAL", "1")
-    # 覆寫 models.py 內的 DATABASE_URL（本機測試用 SQLite）
-    import models
-    models.DATABASE_URL = "sqlite:///./seed_test.db"
-    models.engine = __import__("sqlalchemy").create_engine(
-        models.DATABASE_URL, connect_args={"check_same_thread": False}
-    )
-    models.SessionLocal = __import__("sqlalchemy.orm", fromlist=["sessionmaker"]).sessionmaker(
-        autocommit=False, autoflush=False, bind=models.engine
-    )
-
-from models import Submission, ModelVersion, init_db, SessionLocal  # noqa: E402
+from models import Submission, ModelVersion, init_db, SessionLocal
 
 SUBMISSIONS = [
     {
         "req_no": "MH-2026-001",
+        "req_name": "P&ID 管線辨識",
         "product": "AICAD",
         "company": "HurricaneEdge",
         "submitter": None,                          # 待 HurricaneEdge 補填
         "purpose": "P&ID 工程圖管線辨識，AICAD 轉檔流程核心辨識步驟",
+        "priority": "P1",
+        "model_type": "detection",
         "class_list": None,                         # 待 HurricaneEdge 補填
-        "map50_threshold": None,                    # 待 HurricaneEdge 補填
+        "map50_threshold": None,
+        "map50_target": None,                       # 待 HurricaneEdge 補填
+        "arch": "yolov8m",
         "input_spec": "P&ID 工程圖 PNG 格式（或 PDF 轉 PNG），解析度範圍待補填",
         "deploy_env": "aicad-api :8200",
         "dataset_source": None,                     # 待 HurricaneEdge 補填
         "dataset_count": None,                      # 待 HurricaneEdge 補填
         "label_format": "YOLO（推測，待確認）",
         "expected_delivery": "已部署（Phase 0 補登記，部署日期 2026-04-15）",
-        "status": "completed",
+        "status": "accepted",
     },
     {
         "req_no": "MH-2026-002",
+        "req_name": "P&ID 儀器符號辨識",
         "product": "AICAD",
         "company": "HurricaneEdge",
         "submitter": None,
         "purpose": "P&ID 工程圖儀器符號辨識，與 PID 管線辨識模型協同運作",
+        "priority": "P1",
+        "model_type": "detection",
         "class_list": None,                         # 待 HurricaneEdge 補填（儀器符號類型清單）
         "map50_threshold": None,
+        "map50_target": None,
+        "arch": "yolov8m",
         "input_spec": "P&ID 工程圖 PNG 格式（或 PDF 轉 PNG），解析度範圍待補填",
         "deploy_env": "aicad-api :8200",
         "dataset_source": None,
         "dataset_count": None,
         "label_format": "YOLO（推測，待確認）",
         "expected_delivery": "已部署（Phase 0 補登記，部署日期 2026-04-15）",
-        "status": "completed",
+        "status": "accepted",
     },
 ]
 
@@ -72,6 +69,10 @@ MODEL_VERSIONS = [
         "train_date": "2026-04-15",
         "map50": 0.989,
         "map50_95": 0.967,
+        "map50_actual": 0.989,
+        "map50_95_actual": 0.967,
+        "pass_fail": "pass",
+        "arch": "yolov8m",
         "file_path": "pid_model.pt",
         "status": "active",
         "notes": "Phase 0 補登記，當前生產版本。mAP50-95=0.967。"
@@ -85,7 +86,11 @@ MODEL_VERSIONS = [
         "version": "v2",
         "train_date": "2026-04-15",
         "map50": 0.895,
-        "map50_95": None,     # 資料缺失，待 HurricaneEdge 補充
+        "map50_95": None,       # 資料缺失，待 HurricaneEdge 補充
+        "map50_actual": 0.895,
+        "map50_95_actual": None,
+        "pass_fail": "pass",
+        "arch": "yolov8m",
         "file_path": "instrument_yolo.pt",
         "status": "active",
         "notes": "Phase 0 補登記，當前生產版本。mAP50-95 資料缺失，待 HurricaneEdge 補充或說明。"
