@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from models import Submission, get_db
 from notifications import notify
+from auth import CurrentUser
 
 router = APIRouter()
 
@@ -40,6 +41,7 @@ async def perform_action(
     action: str,
     payload: ActionPayload = ActionPayload(),
     db: Session = Depends(get_db),
+    current_user: dict = CurrentUser,
 ):
     if action not in TRANSITIONS:
         raise HTTPException(

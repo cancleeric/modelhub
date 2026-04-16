@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from models import Submission, get_db
+from auth import CurrentUser
 
 router = APIRouter()
 
@@ -148,7 +149,11 @@ def get_submission(req_no: str, db: Session = Depends(get_db)):
 
 
 @router.post("/", response_model=SubmissionOut, status_code=201)
-def create_submission(payload: SubmissionCreate, db: Session = Depends(get_db)):
+async def create_submission(
+    payload: SubmissionCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = CurrentUser,
+):
     """建立需求單，req_no 由 server 自動生成 MH-YYYY-NNN"""
     year = datetime.utcnow().year
 
@@ -178,7 +183,12 @@ def create_submission(payload: SubmissionCreate, db: Session = Depends(get_db)):
 
 
 @router.patch("/{req_no}", response_model=SubmissionOut)
-def update_submission(req_no: str, payload: SubmissionUpdate, db: Session = Depends(get_db)):
+async def update_submission(
+    req_no: str,
+    payload: SubmissionUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = CurrentUser,
+):
     obj = db.query(Submission).filter(Submission.req_no == req_no).first()
     if not obj:
         raise HTTPException(status_code=404, detail="Submission not found")
@@ -190,7 +200,11 @@ def update_submission(req_no: str, payload: SubmissionUpdate, db: Session = Depe
 
 
 @router.delete("/{req_no}", status_code=204)
-def delete_submission(req_no: str, db: Session = Depends(get_db)):
+async def delete_submission(
+    req_no: str,
+    db: Session = Depends(get_db),
+    current_user: dict = CurrentUser,
+):
     obj = db.query(Submission).filter(Submission.req_no == req_no).first()
     if not obj:
         raise HTTPException(status_code=404, detail="Submission not found")

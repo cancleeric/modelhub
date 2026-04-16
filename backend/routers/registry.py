@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from models import ModelVersion, Submission, get_db
+from auth import CurrentUser
 
 router = APIRouter()
 
@@ -133,7 +134,11 @@ def get_version(id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/", response_model=ModelVersionOut, status_code=201)
-def create_version(payload: ModelVersionCreate, db: Session = Depends(get_db)):
+async def create_version(
+    payload: ModelVersionCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = CurrentUser,
+):
     obj = ModelVersion(**payload.model_dump())
     db.add(obj)
     db.commit()
@@ -142,7 +147,12 @@ def create_version(payload: ModelVersionCreate, db: Session = Depends(get_db)):
 
 
 @router.patch("/{id}", response_model=ModelVersionOut)
-def update_version(id: int, payload: ModelVersionUpdate, db: Session = Depends(get_db)):
+async def update_version(
+    id: int,
+    payload: ModelVersionUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = CurrentUser,
+):
     obj = db.query(ModelVersion).filter(ModelVersion.id == id).first()
     if not obj:
         raise HTTPException(status_code=404, detail="ModelVersion not found")
@@ -154,7 +164,12 @@ def update_version(id: int, payload: ModelVersionUpdate, db: Session = Depends(g
 
 
 @router.post("/{id}/accept", response_model=ModelVersionOut)
-def accept_version(id: int, payload: AcceptancePayload, db: Session = Depends(get_db)):
+async def accept_version(
+    id: int,
+    payload: AcceptancePayload,
+    db: Session = Depends(get_db),
+    current_user: dict = CurrentUser,
+):
     """
     驗收模型版本：記錄 map50_actual、pass_fail，並與對應需求單的 map50_target 比對。
     """
@@ -182,7 +197,11 @@ def accept_version(id: int, payload: AcceptancePayload, db: Session = Depends(ge
 
 
 @router.delete("/{id}", status_code=204)
-def delete_version(id: int, db: Session = Depends(get_db)):
+async def delete_version(
+    id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = CurrentUser,
+):
     obj = db.query(ModelVersion).filter(ModelVersion.id == id).first()
     if not obj:
         raise HTTPException(status_code=404, detail="ModelVersion not found")
