@@ -45,6 +45,8 @@ class Submission(Base):
     class_count = Column(Integer, nullable=True)
     label_format = Column(String, nullable=True)        # 標注格式，如 YOLO
     kaggle_dataset_url = Column(String, nullable=True)
+    dataset_path = Column(String, nullable=True)       # 本地/NFS 資料集路徑
+    dataset_train_count = Column(Integer, nullable=True)  # 實際 train 數量
     # --- 時程 ---
     expected_delivery = Column(String, nullable=True)   # 預計交付日期
     # --- 狀態機 ---

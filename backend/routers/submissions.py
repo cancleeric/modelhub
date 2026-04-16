@@ -39,6 +39,8 @@ class SubmissionCreate(BaseModel):
     class_count: Optional[int] = None
     label_format: Optional[str] = None
     kaggle_dataset_url: Optional[str] = None
+    dataset_path: Optional[str] = None
+    dataset_train_count: Optional[int] = None
     expected_delivery: Optional[str] = None
 
 
@@ -66,6 +68,8 @@ class SubmissionUpdate(BaseModel):
     class_count: Optional[int] = None
     label_format: Optional[str] = None
     kaggle_dataset_url: Optional[str] = None
+    dataset_path: Optional[str] = None
+    dataset_train_count: Optional[int] = None
     expected_delivery: Optional[str] = None
     status: Optional[str] = None
     reviewer_note: Optional[str] = None
@@ -99,6 +103,8 @@ class SubmissionOut(BaseModel):
     class_count: Optional[int]
     label_format: Optional[str]
     kaggle_dataset_url: Optional[str]
+    dataset_path: Optional[str]
+    dataset_train_count: Optional[int]
     expected_delivery: Optional[str]
     status: str
     reviewer_note: Optional[str]
@@ -195,7 +201,7 @@ async def update_submission(
     req_no: str,
     payload: SubmissionUpdate,
     db: Session = Depends(get_db),
-    current_user: dict = CurrentUser,
+    current_user: dict = CurrentUserOrApiKey,
 ):
     obj = db.query(Submission).filter(Submission.req_no == req_no).first()
     if not obj:
