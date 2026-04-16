@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { submissionsApi } from '../api/client'
@@ -9,10 +9,30 @@ const STATUS_OPTIONS = [
   'training', 'trained', 'accepted', 'failed',
 ]
 
+const PRIORITY_OPTIONS = ['', 'P0', 'P1', 'P2', 'P3']
+
+function getStartOfWeek(): Date {
+  const now = new Date()
+  const day = now.getDay() // 0=Sun
+  const diff = now.getDate() - day + (day === 0 ? -6 : 1) // Mon
+  const mon = new Date(now)
+  mon.setDate(diff)
+  mon.setHours(0, 0, 0, 0)
+  return mon
+}
+
 export default function SubmissionListPage() {
   const [statusFilter, setStatusFilter] = useState('')
+  const [priorityFilter, setPriorityFilter] = useState('')
   const [productFilter, setProductFilter] = useState('')
 
+  // Load all submissions (no status filter at API level so we can count stats)
+  const { data: allData } = useQuery({
+    queryKey: ['submissions-all'],
+    queryFn: () => submissionsApi.list(),
+  })
+
+  // Load filtered submissions for table
   const { data, isLoading, error } = useQuery({
     queryKey: ['submissions', statusFilter, productFilter],
     queryFn: () =>
@@ -22,10 +42,24 @@ export default function SubmissionListPage() {
       }),
   })
 
-  const { data: stats } = useQuery({
-    queryKey: ['stats'],
-    queryFn: submissionsApi.stats,
-  })
+  // Compute 3 stats from allData
+  const statsCards = useMemo(() => {
+    if (!allData) return null
+    const weekStart = getStartOfWeek()
+    const pending = allData.filter((s) => s.status === 'submitted').length
+    const training = allData.filter((s) => s.status === 'training').length
+    const approvedThisWeek = allData.filter(
+      (s) => s.status === 'approved' && new Date(s.created_at) >= weekStart,
+    ).length
+    return { pending, training, approvedThisWeek }
+  }, [allData])
+
+  // Priority filter applied on frontend
+  const filteredData = useMemo(() => {
+    if (!data) return data
+    if (!priorityFilter) return data
+    return data.filter((s) => s.priority === priorityFilter)
+  }, [data, priorityFilter])
 
   return (
     <div>
@@ -39,20 +73,41 @@ export default function SubmissionListPage() {
         </Link>
       </div>
 
-      {/* Stats */}
-      {stats && (
-        <div className="grid grid-cols-4 gap-3 mb-6">
-          {Object.entries(stats.by_status).map(([s, c]) => (
-            <div key={s} className="bg-white rounded shadow-sm p-3 text-center">
-              <div className="text-2xl font-bold text-gray-800">{c}</div>
-              <StatusBadge status={s} />
+      {/* Summary Cards */}
+      {statsCards && (
+        <div className="grid grid-cols-3 gap-4 mb-6">
+          <div className="bg-white rounded shadow-sm p-4 flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-yellow-100 flex items-center justify-center text-yellow-600 font-bold text-lg">
+              {statsCards.pending}
             </div>
-          ))}
+            <div>
+              <div className="text-sm text-gray-500">待審</div>
+              <div className="text-xs text-gray-400">submitted 狀態</div>
+            </div>
+          </div>
+          <div className="bg-white rounded shadow-sm p-4 flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold text-lg">
+              {statsCards.training}
+            </div>
+            <div>
+              <div className="text-sm text-gray-500">訓練中</div>
+              <div className="text-xs text-gray-400">training 狀態</div>
+            </div>
+          </div>
+          <div className="bg-white rounded shadow-sm p-4 flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center text-green-600 font-bold text-lg">
+              {statsCards.approvedThisWeek}
+            </div>
+            <div>
+              <div className="text-sm text-gray-500">本週核准</div>
+              <div className="text-xs text-gray-400">approved，本週建立</div>
+            </div>
+          </div>
         </div>
       )}
 
       {/* Filters */}
-      <div className="flex gap-3 mb-4">
+      <div className="flex gap-3 mb-4 flex-wrap">
         <select
           className="border rounded px-3 py-1.5 text-sm bg-white"
           value={statusFilter}
@@ -61,6 +116,16 @@ export default function SubmissionListPage() {
           <option value="">全部狀態</option>
           {STATUS_OPTIONS.filter(Boolean).map((s) => (
             <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+        <select
+          className="border rounded px-3 py-1.5 text-sm bg-white"
+          value={priorityFilter}
+          onChange={(e) => setPriorityFilter(e.target.value)}
+        >
+          <option value="">全部優先度</option>
+          {PRIORITY_OPTIONS.filter(Boolean).map((p) => (
+            <option key={p} value={p}>{p}</option>
           ))}
         </select>
         <input
@@ -75,7 +140,7 @@ export default function SubmissionListPage() {
       {/* Table */}
       {isLoading && <p className="text-gray-500">載入中...</p>}
       {error && <p className="text-red-500">載入失敗</p>}
-      {data && (
+      {filteredData && (
         <div className="bg-white rounded shadow overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50 border-b">
@@ -90,7 +155,7 @@ export default function SubmissionListPage() {
               </tr>
             </thead>
             <tbody className="divide-y">
-              {data.map((s) => (
+              {filteredData.map((s) => (
                 <tr key={s.req_no} className="hover:bg-gray-50">
                   <td className="px-4 py-3">
                     <Link
@@ -114,7 +179,7 @@ export default function SubmissionListPage() {
                   </td>
                 </tr>
               ))}
-              {data.length === 0 && (
+              {filteredData.length === 0 && (
                 <tr>
                   <td colSpan={7} className="text-center py-8 text-gray-400">
                     無資料

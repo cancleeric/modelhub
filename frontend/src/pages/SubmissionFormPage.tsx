@@ -4,8 +4,62 @@ import { submissionsApi } from '../api/client'
 
 const PRODUCTS = ['AICAD', '打工仔', '天機', 'RS Conch', '其他']
 
+type ModelTemplateKey = 'detection' | 'classification' | 'segmentation' | 'ocr'
+
+interface ModelTemplate {
+  arch: string
+  map50_threshold: number
+  map50_95_target: number | null
+  inference_latency_ms: number
+  model_size_limit_mb: number
+  label_format: string
+  input_spec: string
+}
+
+const MODEL_TEMPLATES: Record<ModelTemplateKey, ModelTemplate> = {
+  detection: {
+    arch: 'YOLOv8m',
+    map50_threshold: 0.85,
+    map50_95_target: 0.65,
+    inference_latency_ms: 200,
+    model_size_limit_mb: 100,
+    label_format: 'YOLO',
+    input_spec: '640x640',
+  },
+  classification: {
+    arch: 'MobileNetV2',
+    map50_threshold: 0.90,
+    map50_95_target: null,
+    inference_latency_ms: 50,
+    model_size_limit_mb: 50,
+    label_format: 'ImageFolder',
+    input_spec: '224x224',
+  },
+  segmentation: {
+    arch: 'UNet-ResNet18',
+    map50_threshold: 0.80,
+    map50_95_target: 0.60,
+    inference_latency_ms: 150,
+    model_size_limit_mb: 100,
+    label_format: 'COCO',
+    input_spec: '512x512',
+  },
+  ocr: {
+    arch: 'TrOCR-small',
+    map50_threshold: 0.95,
+    map50_95_target: null,
+    inference_latency_ms: 50,
+    model_size_limit_mb: 250,
+    label_format: 'text_label',
+    input_spec: '32x128',
+  },
+}
+
+const MODEL_TYPE_OPTIONS: ModelTemplateKey[] = ['detection', 'classification', 'segmentation', 'ocr']
+
 export default function SubmissionFormPage() {
   const navigate = useNavigate()
+  const [appliedTemplate, setAppliedTemplate] = useState<ModelTemplateKey | null>(null)
   const [form, setForm] = useState({
     req_name: '',
     product: 'AICAD',
@@ -14,6 +68,12 @@ export default function SubmissionFormPage() {
     purpose: '',
     class_list: '',
     map50_target: '',
+    map50_threshold: '',
+    map50_95_target: '',
+    inference_latency_ms: '',
+    model_size_limit_mb: '',
+    arch: '',
+    input_spec: '',
     dataset_source: '',
     dataset_count: '',
     label_format: '',
@@ -30,6 +90,22 @@ export default function SubmissionFormPage() {
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }))
   }
 
+  const handleTemplateApply = (type: ModelTemplateKey) => {
+    const tpl = MODEL_TEMPLATES[type]
+    setForm((prev) => ({
+      ...prev,
+      model_type: type,
+      arch: tpl.arch,
+      map50_threshold: String(tpl.map50_threshold),
+      map50_95_target: tpl.map50_95_target != null ? String(tpl.map50_95_target) : '',
+      inference_latency_ms: String(tpl.inference_latency_ms),
+      model_size_limit_mb: String(tpl.model_size_limit_mb),
+      label_format: tpl.label_format,
+      input_spec: tpl.input_spec,
+    }))
+    setAppliedTemplate(type)
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setSubmitting(true)
@@ -38,6 +114,10 @@ export default function SubmissionFormPage() {
       const payload = {
         ...form,
         map50_target: form.map50_target ? parseFloat(form.map50_target) : undefined,
+        map50_threshold: form.map50_threshold ? parseFloat(form.map50_threshold) : undefined,
+        map50_95_target: form.map50_95_target ? parseFloat(form.map50_95_target) : undefined,
+        inference_latency_ms: form.inference_latency_ms ? parseInt(form.inference_latency_ms) : undefined,
+        model_size_limit_mb: form.model_size_limit_mb ? parseInt(form.model_size_limit_mb) : undefined,
       }
       const created = await submissionsApi.create(payload)
       navigate(`/submissions/${created.req_no}`)
@@ -61,6 +141,32 @@ export default function SubmissionFormPage() {
             {error}
           </div>
         )}
+
+        {/* Template Selector */}
+        <div className="bg-indigo-50 border border-indigo-100 rounded p-4">
+          <p className="text-sm font-medium text-indigo-800 mb-2">快速套用需求單範本</p>
+          <div className="flex gap-2 flex-wrap">
+            {MODEL_TYPE_OPTIONS.map((type) => (
+              <button
+                key={type}
+                type="button"
+                onClick={() => handleTemplateApply(type)}
+                className={`px-3 py-1.5 text-sm rounded border transition-colors ${
+                  appliedTemplate === type
+                    ? 'bg-indigo-600 text-white border-indigo-600'
+                    : 'bg-white text-indigo-700 border-indigo-300 hover:bg-indigo-100'
+                }`}
+              >
+                {type}
+              </button>
+            ))}
+          </div>
+          {appliedTemplate && (
+            <p className="text-xs text-indigo-600 mt-2">
+              已套用 {appliedTemplate} 範本，可依需求調整
+            </p>
+          )}
+        </div>
 
         <Field label="需求名稱 *" required>
           <input
@@ -126,12 +232,32 @@ export default function SubmissionFormPage() {
 
         <div className="grid grid-cols-2 gap-4">
           <Field label="模型類型">
-            <select name="model_type" value={form.model_type} onChange={handleChange} className="input">
-              <option value="detection">detection</option>
-              <option value="classification">classification</option>
-              <option value="segmentation">segmentation</option>
+            <select
+              name="model_type"
+              value={form.model_type}
+              onChange={(e) => {
+                handleChange(e)
+                setAppliedTemplate(null)
+              }}
+              className="input"
+            >
+              {MODEL_TYPE_OPTIONS.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
             </select>
           </Field>
+          <Field label="架構">
+            <input
+              name="arch"
+              value={form.arch}
+              onChange={handleChange}
+              className="input"
+              placeholder="YOLOv8m"
+            />
+          </Field>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
           <Field label="mAP50 目標 *" required>
             <input
               name="map50_target"
@@ -144,6 +270,69 @@ export default function SubmissionFormPage() {
               max="1"
               className="input"
               placeholder="0.90"
+            />
+          </Field>
+          <Field label="mAP50 門檻">
+            <input
+              name="map50_threshold"
+              value={form.map50_threshold}
+              onChange={handleChange}
+              type="number"
+              step="0.01"
+              min="0"
+              max="1"
+              className="input"
+              placeholder="0.85"
+            />
+          </Field>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="mAP50-95 目標">
+            <input
+              name="map50_95_target"
+              value={form.map50_95_target}
+              onChange={handleChange}
+              type="number"
+              step="0.01"
+              min="0"
+              max="1"
+              className="input"
+              placeholder="0.65"
+            />
+          </Field>
+          <Field label="推論延遲上限 (ms)">
+            <input
+              name="inference_latency_ms"
+              value={form.inference_latency_ms}
+              onChange={handleChange}
+              type="number"
+              min="0"
+              className="input"
+              placeholder="200"
+            />
+          </Field>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="模型大小上限 (MB)">
+            <input
+              name="model_size_limit_mb"
+              value={form.model_size_limit_mb}
+              onChange={handleChange}
+              type="number"
+              min="0"
+              className="input"
+              placeholder="100"
+            />
+          </Field>
+          <Field label="輸入規格">
+            <input
+              name="input_spec"
+              value={form.input_spec}
+              onChange={handleChange}
+              className="input"
+              placeholder="640x640"
             />
           </Field>
         </div>

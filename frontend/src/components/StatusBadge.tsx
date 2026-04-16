@@ -1,5 +1,3 @@
-import type { SubmissionStatus } from '../api/client'
-
 const STATUS_STYLES: Record<string, string> = {
   draft:     'bg-gray-100 text-gray-700',
   submitted: 'bg-blue-100 text-blue-700',
