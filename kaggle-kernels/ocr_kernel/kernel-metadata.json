@@ -1,0 +1,13 @@
+{
+  "id": "boardgamegroup/mh-2026-009-engineering-ocr-trocr-small",
+  "title": "MH-2026-009 Engineering OCR TrOCR Small",
+  "code_file": "train_engineering_ocr.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": ["boardgamegroup/aicad-engineering-ocr"],
+  "competition_sources": [],
+  "kernel_sources": []
+}
