@@ -213,7 +213,7 @@ trainer = Seq2SeqTrainer(
     args=training_args,
     train_dataset=train_ds,
     eval_dataset=val_ds,
-    tokenizer=processor.feature_extractor,
+    processing_class=processor,
     data_collator=default_data_collator,
     compute_metrics=compute_metrics,
 )
