@@ -58,19 +58,26 @@ print(f"DATA_ROOT    : {DATA_ROOT}")
 print(f"Files        : {sorted(os.listdir(DATA_ROOT)) if os.path.exists(DATA_ROOT) else '路徑不存在！'}")
 
 # ---------------------------------------------------------------------------
-# 3. 解壓 images.zip（若有）
+# 3. 找 images 目錄（Kaggle auto-extract 會變成 images/images/）
 # ---------------------------------------------------------------------------
-IMAGES_DIR = os.path.join(DATA_ROOT, "images")
-ZIP_PATH   = os.path.join(DATA_ROOT, "images.zip")
-
-if not os.path.exists(IMAGES_DIR) and os.path.exists(ZIP_PATH):
-    print("[UNZIP] Extracting images.zip ...")
-    import zipfile
-    with zipfile.ZipFile(ZIP_PATH) as zf:
-        zf.extractall(DATA_ROOT)
-    print(f"[UNZIP] Done. images/ has {len(os.listdir(IMAGES_DIR))} files")
-else:
-    print(f"images/ has {len(os.listdir(IMAGES_DIR)) if os.path.exists(IMAGES_DIR) else 0} files")
+_candidates = [
+    os.path.join(DATA_ROOT, "images", "images"),
+    os.path.join(DATA_ROOT, "images"),
+]
+IMAGES_DIR = None
+for c in _candidates:
+    if os.path.exists(c):
+        _n = len([f for f in os.listdir(c) if f.endswith(".png")])
+        if _n > 100:
+            IMAGES_DIR = c
+            break
+if IMAGES_DIR is None:
+    # 全局搜尋
+    _found = _glob.glob(f"{DATA_ROOT}/**/angle_0000.png", recursive=True)
+    if _found:
+        IMAGES_DIR = os.path.dirname(_found[0])
+print(f"IMAGES_DIR   : {IMAGES_DIR}")
+print(f"images count : {len(os.listdir(IMAGES_DIR)) if IMAGES_DIR else 0}")
 
 # ---------------------------------------------------------------------------
 # 4. 讀取 labels.txt
@@ -190,7 +197,7 @@ training_args = Seq2SeqTrainingArguments(
     weight_decay=0.01,
     logging_dir=os.path.join(WORK_DIR, "logs"),
     logging_steps=50,
-    evaluation_strategy="epoch",
+    eval_strategy="epoch",
     save_strategy="epoch",
     load_best_model_at_end=True,
     metric_for_best_model="cer",
