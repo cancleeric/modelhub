@@ -6,6 +6,7 @@ services:
     ports:
       - "127.0.0.1:8950:8000"
     volumes:
+      - ./backend:/app
       - /Users/yinghaowang/HurricaneCore/docker-data/modelhub/db:/app/data
     restart: unless-stopped
     networks:
