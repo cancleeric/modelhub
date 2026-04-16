@@ -1,6 +1,9 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import Layout from './components/Layout'
+import ProtectedRoute from './components/ProtectedRoute'
+import LoginPage from './pages/LoginPage'
+import CallbackPage from './pages/CallbackPage'
 import SubmissionListPage from './pages/SubmissionListPage'
 import SubmissionFormPage from './pages/SubmissionFormPage'
 import SubmissionDetailPage from './pages/SubmissionDetailPage'
@@ -21,16 +24,30 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <Layout>
-          <Routes>
-            <Route path="/" element={<SubmissionListPage />} />
-            <Route path="/submit" element={<SubmissionFormPage />} />
-            <Route path="/submissions/:req_no" element={<SubmissionDetailPage />} />
-            <Route path="/review" element={<ReviewPage />} />
-            <Route path="/registry" element={<RegistryPage />} />
-            <Route path="/registry/:id/accept" element={<AcceptancePage />} />
-          </Routes>
-        </Layout>
+        <Routes>
+          {/* 公開路由 */}
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/callback" element={<CallbackPage />} />
+
+          {/* 需登入的路由 */}
+          <Route
+            path="/*"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <Routes>
+                    <Route path="/" element={<SubmissionListPage />} />
+                    <Route path="/submit" element={<SubmissionFormPage />} />
+                    <Route path="/submissions/:req_no" element={<SubmissionDetailPage />} />
+                    <Route path="/review" element={<ReviewPage />} />
+                    <Route path="/registry" element={<RegistryPage />} />
+                    <Route path="/registry/:id/accept" element={<AcceptancePage />} />
+                  </Routes>
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+        </Routes>
       </BrowserRouter>
     </QueryClientProvider>
   )

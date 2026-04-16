@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from models import Submission, get_db
-from auth import CurrentUser
+from auth import CurrentUser, CurrentUserOrApiKey
 
 router = APIRouter()
 
@@ -160,7 +160,7 @@ async def get_submission(
 async def create_submission(
     payload: SubmissionCreate,
     db: Session = Depends(get_db),
-    current_user: dict = CurrentUser,
+    current_user: dict = CurrentUserOrApiKey,
 ):
     """建立需求單，req_no 由 server 自動生成 MH-YYYY-NNN"""
     year = datetime.utcnow().year

@@ -2,17 +2,21 @@ import { useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { registryApi, submissionsApi } from '../api/client'
+import { getCachedUserInfo } from '../auth'
 
 export default function AcceptancePage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const qc = useQueryClient()
 
+  const userInfo = getCachedUserInfo()
+  const defaultAcceptedBy = userInfo?.name ?? userInfo?.preferred_username ?? userInfo?.email ?? ''
+
   const [form, setForm] = useState({
     map50_actual: '',
     map50_95_actual: '',
     acceptance_note: '',
-    accepted_by: '',
+    accepted_by: defaultAcceptedBy,
   })
   const [error, setError] = useState('')
 
@@ -140,7 +144,12 @@ export default function AcceptancePage() {
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">驗收人</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            驗收人
+            {defaultAcceptedBy && (
+              <span className="ml-2 text-xs text-gray-400 font-normal">（從 LIDS 帳號自動填入）</span>
+            )}
+          </label>
           <input
             className="w-full border rounded px-3 py-2 text-sm"
             value={form.accepted_by}

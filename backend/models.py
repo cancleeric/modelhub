@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Float, DateTime, create_engine
+from sqlalchemy import Boolean, Column, Integer, String, Float, DateTime, create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 DATABASE_URL = "sqlite:////app/data/modelhub.db"
@@ -86,12 +86,23 @@ class ModelVersion(Base):
     accepted_by = Column(String, nullable=True)
     accepted_at = Column(DateTime, nullable=True)
     acceptance_note = Column(String, nullable=True)
+    is_current = Column(Boolean, default=False)
     # ---
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+    # Migration: add is_current if not exists (SQLite ALTER TABLE)
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        try:
+            conn.execute(text(
+                "ALTER TABLE model_versions ADD COLUMN is_current BOOLEAN DEFAULT FALSE"
+            ))
+            conn.commit()
+        except Exception:
+            pass  # 欄位已存在，忽略
 
 
 def get_db():

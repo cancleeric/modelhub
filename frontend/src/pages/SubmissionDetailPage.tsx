@@ -17,6 +17,7 @@ const AVAILABLE_ACTIONS: Record<string, { action: string; label: string; color: 
     { action: 'accept', label: '驗收通過', color: 'emerald' },
     { action: 'fail',   label: '驗收失敗', color: 'red' },
   ],
+  failed:   [{ action: 'retrain', label: '重新訓練', color: 'yellow' }],
 }
 
 const COLOR_MAP: Record<string, string> = {

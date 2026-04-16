@@ -8,6 +8,9 @@ services:
     volumes:
       - ./backend:/app
       - /Users/yinghaowang/HurricaneCore/docker-data/modelhub/db:/app/data
+      - /Users/yinghaowang/HurricaneCore/docker-data/modelhub/models:/app/data/models
+    environment:
+      - MODELHUB_API_KEY=modelhub-dev-key-2026
     restart: unless-stopped
     networks:
       - squid_dev_network

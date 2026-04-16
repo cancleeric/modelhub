@@ -4,6 +4,30 @@ import { useQuery } from '@tanstack/react-query'
 import { registryApi } from '../api/client'
 import StatusBadge from '../components/StatusBadge'
 
+const API_KEY = import.meta.env.VITE_MODELHUB_API_KEY ?? 'modelhub-dev-key-2026'
+
+function downloadModel(id: number, filename: string) {
+  const url = `/api/registry/${id}/download`
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename || `model-${id}.pt`
+  // API Key 下載：透過 fetch + blob，因為需要自訂 header
+  fetch(url, { headers: { 'X-Api-Key': API_KEY } })
+    .then((r) => {
+      if (!r.ok) throw new Error(`下載失敗 (${r.status})`)
+      return r.blob()
+    })
+    .then((blob) => {
+      const objectUrl = URL.createObjectURL(blob)
+      a.href = objectUrl
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(objectUrl)
+    })
+    .catch((err: Error) => alert(err.message))
+}
+
 export default function RegistryPage() {
   const [productFilter, setProductFilter] = useState('')
 
@@ -49,7 +73,7 @@ export default function RegistryPage() {
             </thead>
             <tbody className="divide-y">
               {data.map((v) => (
-                <tr key={v.id} className="hover:bg-gray-50">
+                <tr key={v.id} className={`hover:bg-gray-50 ${v.is_current ? 'bg-green-50' : ''}`}>
                   <td className="px-4 py-3">
                     <Link
                       to={`/submissions/${v.req_no}`}
@@ -59,7 +83,14 @@ export default function RegistryPage() {
                     </Link>
                   </td>
                   <td className="px-4 py-3 text-gray-700">{v.product}</td>
-                  <td className="px-4 py-3 text-gray-800 font-medium">{v.model_name}</td>
+                  <td className="px-4 py-3 text-gray-800 font-medium">
+                    <span>{v.model_name}</span>
+                    {v.is_current && (
+                      <span className="ml-2 inline-block px-1.5 py-0.5 text-xs font-bold bg-green-600 text-white rounded">
+                        CURRENT
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 font-mono text-xs text-gray-600">{v.version}</td>
                   <td className="px-4 py-3 text-gray-500 text-xs">{v.arch || '-'}</td>
                   <td className="px-4 py-3">
@@ -84,13 +115,26 @@ export default function RegistryPage() {
                   <td className="px-4 py-3 font-mono text-xs text-gray-500">
                     {v.file_path || '-'}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 flex gap-2 items-center">
                     <Link
                       to={`/registry/${v.id}/accept`}
                       className="text-indigo-600 text-xs hover:underline"
                     >
                       驗收
                     </Link>
+                    {v.file_path && (
+                      <button
+                        onClick={() =>
+                          downloadModel(
+                            v.id,
+                            v.file_path!.split('/').pop() ?? `model-${v.id}.pt`,
+                          )
+                        }
+                        className="text-xs px-2 py-0.5 bg-gray-100 hover:bg-gray-200 rounded text-gray-700 transition-colors"
+                      >
+                        下載
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}

@@ -27,6 +27,7 @@ TRANSITIONS: dict[str, tuple[str, str]] = {
     "complete_training": ("training",  "trained"),
     "accept":            ("trained",   "accepted"),
     "fail":              ("trained",   "failed"),
+    "retrain":           ("failed",    "approved"),   # 驗收失敗後重新訓練
 }
 
 
@@ -129,6 +130,11 @@ async def _send_notification(action: str, obj: Submission, payload: ActionPayloa
                     to=obj.submitter,
                     message=f"[ModelHub] 需求單 {obj.req_no} 模型驗收未通過，請確認後續處理。",
                 )
+        elif action == "retrain":
+            await notify(
+                to="cto@hurricanecore.internal",
+                message=f"[ModelHub] 需求單 {obj.req_no} 已排入重新訓練，狀態重置為 approved。",
+            )
     except Exception:
         # 通知失敗不影響主流程
         pass

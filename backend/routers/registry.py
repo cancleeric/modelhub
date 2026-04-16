@@ -1,11 +1,13 @@
+import os
 from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from models import ModelVersion, Submission, get_db
-from auth import CurrentUser
+from auth import CurrentUser, get_api_key
 
 router = APIRouter()
 
@@ -35,6 +37,7 @@ class ModelVersionCreate(BaseModel):
     accepted_by: Optional[str] = None
     accepted_at: Optional[datetime] = None
     acceptance_note: Optional[str] = None
+    is_current: Optional[bool] = False
 
 
 class ModelVersionUpdate(BaseModel):
@@ -57,6 +60,7 @@ class ModelVersionUpdate(BaseModel):
     accepted_by: Optional[str] = None
     accepted_at: Optional[datetime] = None
     acceptance_note: Optional[str] = None
+    is_current: Optional[bool] = None
 
 
 class ModelVersionOut(BaseModel):
@@ -81,6 +85,7 @@ class ModelVersionOut(BaseModel):
     accepted_by: Optional[str]
     accepted_at: Optional[datetime]
     acceptance_note: Optional[str]
+    is_current: Optional[bool]
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -128,6 +133,36 @@ async def list_versions(
     if status:
         q = q.filter(ModelVersion.status == status)
     return q.order_by(ModelVersion.created_at.desc()).all()
+
+
+@router.get("/latest", response_model=ModelVersionOut)
+async def get_latest_model(
+    product: str,
+    model_name: str,
+    db: Session = Depends(get_db),
+    api_key: str = Depends(get_api_key),
+):
+    """
+    取得指定 product + model_name 的最新 current pass 版本。
+    供跨公司機器對機器呼叫，使用 API Key 認證。
+    """
+    version = (
+        db.query(ModelVersion)
+        .filter(
+            ModelVersion.is_current == True,  # noqa: E712
+            ModelVersion.pass_fail == "pass",
+            ModelVersion.product == product,
+            ModelVersion.model_name == model_name,
+        )
+        .order_by(ModelVersion.accepted_at.desc())
+        .first()
+    )
+    if not version:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No current passed model found for product={product} model_name={model_name}",
+        )
+    return version
 
 
 @router.get("/{id}", response_model=ModelVersionOut)
@@ -200,6 +235,16 @@ async def accept_version(
     else:
         obj.pass_fail = "pass"  # 無設定目標，預設通過
 
+    # is_current 邏輯：pass 才設為 current，同 req_no 其他版本清除
+    if obj.pass_fail == "pass":
+        db.query(ModelVersion).filter(
+            ModelVersion.req_no == obj.req_no,
+            ModelVersion.id != obj.id,
+        ).update({"is_current": False})
+        obj.is_current = True
+    else:
+        obj.is_current = False
+
     db.commit()
     db.refresh(obj)
     return obj
@@ -216,3 +261,28 @@ async def delete_version(
         raise HTTPException(status_code=404, detail="ModelVersion not found")
     db.delete(obj)
     db.commit()
+
+
+@router.get("/{id}/download")
+async def download_model(
+    id: int,
+    db: Session = Depends(get_db),
+    api_key: str = Depends(get_api_key),
+):
+    """
+    下載模型檔案。使用 API Key 認證，供跨公司機器對機器呼叫。
+    """
+    version = db.query(ModelVersion).filter(ModelVersion.id == id).first()
+    if not version or not version.file_path:
+        raise HTTPException(status_code=404, detail="Model file not found")
+    container_path = f"/app/data/models/{os.path.basename(version.file_path)}"
+    if not os.path.exists(container_path):
+        raise HTTPException(
+            status_code=404,
+            detail=f"File not on disk: {container_path}",
+        )
+    return FileResponse(
+        container_path,
+        filename=os.path.basename(version.file_path),
+        media_type="application/octet-stream",
+    )

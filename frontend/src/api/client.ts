@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { getToken } from '../auth'
 
 // vite proxy 把 /api 轉 http://localhost:8950，容器模式下改為直連
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
@@ -7,6 +8,30 @@ export const api = axios.create({
   baseURL: BASE_URL,
   headers: { 'Content-Type': 'application/json' },
 })
+
+// 自動帶 Bearer token
+api.interceptors.request.use((config) => {
+  const token = getToken()
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+})
+
+// 401 時導向登入頁
+api.interceptors.response.use(
+  (response) => response,
+  (error: unknown) => {
+    const status = (error as { response?: { status?: number } })?.response?.status
+    if (status === 401) {
+      localStorage.removeItem('modelhub_access_token')
+      localStorage.removeItem('modelhub_id_token')
+      localStorage.removeItem('modelhub_userinfo')
+      window.location.href = '/login'
+    }
+    return Promise.reject(error)
+  },
+)
 
 // --- Types ---
 
@@ -76,6 +101,7 @@ export interface ModelVersion {
   accepted_by: string | null
   accepted_at: string | null
   acceptance_note: string | null
+  is_current: boolean | null
   created_at: string
 }
 
