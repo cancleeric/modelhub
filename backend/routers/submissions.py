@@ -114,7 +114,10 @@ class SubmissionOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 @router.get("/stats/summary")
-def get_stats_summary(db: Session = Depends(get_db)):
+async def get_stats_summary(
+    db: Session = Depends(get_db),
+    current_user: dict = CurrentUser,
+):
     """各狀態件數統計"""
     rows = (
         db.query(Submission.status, func.count(Submission.id).label("count"))
@@ -127,10 +130,11 @@ def get_stats_summary(db: Session = Depends(get_db)):
 
 
 @router.get("/", response_model=List[SubmissionOut])
-def list_submissions(
+async def list_submissions(
     status: Optional[str] = None,
     product: Optional[str] = None,
     db: Session = Depends(get_db),
+    current_user: dict = CurrentUser,
 ):
     q = db.query(Submission)
     if status:
@@ -141,7 +145,11 @@ def list_submissions(
 
 
 @router.get("/{req_no}", response_model=SubmissionOut)
-def get_submission(req_no: str, db: Session = Depends(get_db)):
+async def get_submission(
+    req_no: str,
+    db: Session = Depends(get_db),
+    current_user: dict = CurrentUser,
+):
     obj = db.query(Submission).filter(Submission.req_no == req_no).first()
     if not obj:
         raise HTTPException(status_code=404, detail="Submission not found")

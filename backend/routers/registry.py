@@ -98,7 +98,11 @@ class AcceptancePayload(BaseModel):
 # ---------------------------------------------------------------------------
 
 @router.get("/by-req/{req_no}", response_model=List[ModelVersionOut])
-def list_versions_by_req(req_no: str, db: Session = Depends(get_db)):
+async def list_versions_by_req(
+    req_no: str,
+    db: Session = Depends(get_db),
+    current_user: dict = CurrentUser,
+):
     """單一需求單的所有版本"""
     return (
         db.query(ModelVersion)
@@ -109,11 +113,12 @@ def list_versions_by_req(req_no: str, db: Session = Depends(get_db)):
 
 
 @router.get("/", response_model=List[ModelVersionOut])
-def list_versions(
+async def list_versions(
     req_no: Optional[str] = None,
     product: Optional[str] = None,
     status: Optional[str] = None,
     db: Session = Depends(get_db),
+    current_user: dict = CurrentUser,
 ):
     q = db.query(ModelVersion)
     if req_no:
@@ -126,7 +131,11 @@ def list_versions(
 
 
 @router.get("/{id}", response_model=ModelVersionOut)
-def get_version(id: int, db: Session = Depends(get_db)):
+async def get_version(
+    id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = CurrentUser,
+):
     obj = db.query(ModelVersion).filter(ModelVersion.id == id).first()
     if not obj:
         raise HTTPException(status_code=404, detail="ModelVersion not found")
