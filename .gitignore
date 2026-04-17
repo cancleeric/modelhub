@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+venv/
+*.db
+
+# Logs
+logs/*.log
+logs/*.err
+
+# Node
+node_modules/
+dist/
+
+# Model weights & large binaries
+training/**/*.pt
+training/**/*.pth
+training/**/weights/
+
+# Dataset data (large files)
+training/**/yolo_dataset/
+
+# Training run outputs (plots, etc.)
+training/**/yolo_run/
+training/**/resume_run/
+
+# Kaggle credentials
+kaggle.json

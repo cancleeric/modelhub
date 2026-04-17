@@ -198,5 +198,9 @@ async def predict(req_no: str, file: UploadFile = File(...)):
 
 
 if __name__ == "__main__":
+    import os
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8951, log_level="info")
+    port = int(os.environ.get("MODELHUB_INFERENCE_PORT", "8951"))
+    logger.info("Starting inference server on port %d", port)
+    logger.info("Available models: %s", list(MODEL_CONFIGS.keys()))
+    uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")

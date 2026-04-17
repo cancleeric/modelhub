@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>tw.hurricanecore.modelhub.inference</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/yinghaowang/HurricaneCore/modelhub/inference-server/inference_server.py</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/yinghaowang/HurricaneCore/modelhub/inference-server</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/yinghaowang/HurricaneCore/modelhub/logs/inference_server.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/yinghaowang/HurricaneCore/modelhub/logs/inference_server_err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>MODELHUB_INFERENCE_PORT</key>
+        <string>8951</string>
+        <key>HOME</key>
+        <string>/Users/yinghaowang</string>
+    </dict>
+
+    <!-- 崩潰重啟節流：30 秒內最多重啟 1 次 -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+</dict>
+</plist>

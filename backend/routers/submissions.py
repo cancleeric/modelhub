@@ -47,6 +47,14 @@ class SubmissionCreate(BaseModel):
     max_budget_usd: Optional[float] = 5.0
 
 
+class TrainingResultUpdate(BaseModel):
+    """Sprint 8.2 — 訓練腳本回寫用 schema"""
+    status: str                          # "trained" | "training_failed"
+    metrics: Optional[dict] = None      # {"map50": 0.62, "epochs": 20, ...}
+    model_path: Optional[str] = None
+    notes: Optional[str] = None
+
+
 class SubmissionUpdate(BaseModel):
     req_name: Optional[str] = None
     product: Optional[str] = None
@@ -254,6 +262,60 @@ async def update_submission(
         raise HTTPException(status_code=404, detail="Submission not found")
     for field, value in payload.model_dump(exclude_none=True).items():
         setattr(obj, field, value)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.patch("/{req_no}/training-result", response_model=SubmissionOut)
+async def update_training_result(
+    req_no: str,
+    payload: TrainingResultUpdate,
+    db: Session = Depends(get_db),
+    _user: dict = CurrentUserOrApiKey,
+):
+    """
+    Sprint 8.2 — 訓練腳本完成後自動回寫狀態。
+
+    允許 status: trained | training_failed
+    同時更新 training_completed_at, kaggle_status, blocked_reason（如需要）
+    """
+    valid_statuses = {"trained", "training_failed"}
+    if payload.status not in valid_statuses:
+        raise HTTPException(
+            status_code=422,
+            detail=f"status 必須是 {valid_statuses}，收到 {payload.status!r}",
+        )
+
+    obj = db.query(Submission).filter(Submission.req_no == req_no).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Submission not found")
+
+    obj.status = payload.status
+    obj.training_completed_at = datetime.utcnow()
+
+    if payload.metrics:
+        # 把 metrics 中的 map50 / map50_95 同步寫回標準欄位（方便查詢）
+        m = payload.metrics
+        if "map50" in m:
+            try:
+                obj.map50_threshold = float(m["map50"])
+            except Exception:
+                pass
+        if "model_path" not in (payload.model_path or ""):
+            pass
+
+    if payload.model_path:
+        obj.dataset_path = payload.model_path  # 借用 dataset_path 存最佳 model 路徑
+
+    if payload.notes:
+        obj.reviewer_note = (obj.reviewer_note or "") + f"\n[auto] {payload.notes}"
+
+    # 若是 training_failed 且沒有 blocked_reason，補上
+    if payload.status == "training_failed" and not obj.blocked_reason:
+        note_text = payload.notes or "訓練失敗"
+        obj.blocked_reason = f"[sprint8.2] {note_text}"
+
     db.commit()
     db.refresh(obj)
     return obj
