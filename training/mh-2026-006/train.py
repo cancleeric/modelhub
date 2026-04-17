@@ -104,6 +104,18 @@ map50 = float(metrics.box.map50)
 map50_95 = float(metrics.box.map)
 print(f"mAP50={map50:.4f}  mAP50-95={map50_95:.4f}", flush=True)
 
+# Sprint 13 P2-A: 提取 per-class AP50
+per_class_map50 = {}
+try:
+    ap_class_index = metrics.box.ap_class_index
+    ap_per_class = metrics.box.ap50  # per-class AP at IoU=0.50
+    for idx, ap_val in zip(ap_class_index, ap_per_class):
+        class_name = CLASS_NAMES[int(idx)] if int(idx) < len(CLASS_NAMES) else str(idx)
+        per_class_map50[class_name] = round(float(ap_val), 4)
+    print(f"[PER-CLASS mAP50] {per_class_map50}", flush=True)
+except Exception as _pce:
+    print(f"[WARN] per-class metrics 提取失敗: {_pce}", flush=True)
+
 if map50 >= 0.70:
     verdict, tier = "pass", "達標"
 elif map50 >= 0.60:
@@ -122,6 +134,7 @@ result = {
     "classes": CLASS_NAMES,
     "map50": round(map50, 4),
     "map50_95": round(map50_95, 4),
+    "per_class_map50": per_class_map50,
     "verdict": verdict,
     "tier": tier,
     "target": "mAP50 >= 0.70",
@@ -143,6 +156,7 @@ try:
         metrics={"map50": round(map50, 4), "map50_95": round(map50_95, 4), "epochs": EPOCHS},
         model_path=str(best_pt),
         notes=f"train.py 自動回寫: {tier}",
+        per_class_metrics=per_class_map50 if per_class_map50 else None,
     )
 except Exception as _e:
     print(f"[WARN] modelhub_report 回寫失敗（不中斷）: {_e}", flush=True)

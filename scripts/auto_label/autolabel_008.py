@@ -11,6 +11,7 @@ MH-2026-008 Auto-Labeling Script
 """
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -23,7 +24,8 @@ from torchvision.models import mobilenet_v2, MobileNet_V2_Weights
 
 DEFAULT_INPUT = Path("/Users/yinghaowang/HurricaneCore/docker-data/modelhub/datasets/multiview_drawings/raw")
 DEFAULT_OUTPUT = Path("/Users/yinghaowang/HurricaneCore/docker-data/modelhub/datasets/multiview_drawings/labels_auto")
-MODEL_PATH = Path("/Users/yinghaowang/HurricaneCore/modelhub/training/mh-2026-010/pid_symbols_best.pth")
+_DEFAULT_MODEL_PATH = "/Users/yinghaowang/HurricaneCore/modelhub/training/mh-2026-010/pid_symbols_best.pth"
+MODEL_PATH = Path(os.environ.get("PID_MODEL_PATH", _DEFAULT_MODEL_PATH))
 NUM_CLASSES = 11
 CLASSES = [
     "ball_valve", "check_valve", "cock_valve", "flow_meter", "gate_valve",
@@ -40,6 +42,14 @@ BATCH_SIZE = 32
 
 def load_model(model_path: Path, device: str):
     import torch.nn as nn
+    if not model_path.exists():
+        print(
+            f"[ERROR] PID model not found: {model_path}\n"
+            f"  請設定環境變數 PID_MODEL_PATH 指向正確的 .pth 檔案，例如：\n"
+            f"  export PID_MODEL_PATH=/path/to/pid_symbols_best.pth",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     model = mobilenet_v2(weights=MobileNet_V2_Weights.IMAGENET1K_V1)
     model.classifier[1] = nn.Linear(model.classifier[1].in_features, NUM_CLASSES)
     state = torch.load(str(model_path), map_location=device)

@@ -12,8 +12,10 @@ services:
       # Sprint 6.1: Kaggle credential（host 若沒有該檔會 bind 空目錄，poller 會自動 skip）
       - /Users/yinghaowang/HurricaneCore/docker-data/modelhub/kaggle:/root/.kaggle:ro
     environment:
-      # 安全性：請設定非預設值。取得方式：hvault get hurricanecore/dev/MODELHUB_API_KEY
-      - MODELHUB_API_KEY=${MODELHUB_API_KEY:-modelhub-dev-key-2026}
+      # 必填：從 DB api_keys 表取得或由管理員手動設定。
+      # 取得方式：hvault get hurricanecore/dev/MODELHUB_API_KEY
+      # 未設定時訓練腳本的 modelhub_report 回寫將靜默跳過。
+      - MODELHUB_API_KEY=${MODELHUB_API_KEY}
       - MODELHUB_KAGGLE_POLL_INTERVAL=60
       - MODELHUB_GPU_USD_PER_HOUR=0.5
       # ANEMONE_API_TOKEN: 從 Hurricane Vault 取得 (hurricanecore/dev/ANEMONE_API_TOKEN)

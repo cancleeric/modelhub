@@ -6,14 +6,17 @@ API 不可達時只印 warning，不中斷訓練主流程。
 
 環境變數：
   MODELHUB_API_URL   — 預設 http://localhost:8000
-  MODELHUB_API_KEY   — 預設 modelhub-dev-key-2026（bootstrap key）
+  MODELHUB_API_KEY   — 必填，從 api_keys 表取得或由管理員手動設定（hvault get hurricanecore/dev/MODELHUB_API_KEY）
 """
 
+import logging
 import os
 import sys
 
 # Python 版本相容（3.9 沒有 str | None union type hint at runtime for older versions）
 from typing import Optional
+
+logger = logging.getLogger("modelhub_report")
 
 
 def report_result(
@@ -22,16 +25,18 @@ def report_result(
     metrics: dict,
     model_path: Optional[str] = None,
     notes: str = "",
+    per_class_metrics: Optional[dict] = None,
 ) -> bool:
     """
     訓練完成後呼叫此函式，自動回寫 ModelHub submission status。
 
     Args:
-        req_no:     工單編號，例如 "MH-2026-006"
-        passed:     True = trained（pass/baseline），False = training_failed
-        metrics:    dict，例如 {"map50": 0.62, "epochs": 20}
-        model_path: 最佳模型檔案路徑（可選）
-        notes:      附加備註（可選）
+        req_no:             工單編號，例如 "MH-2026-006"
+        passed:             True = trained（pass/baseline），False = training_failed
+        metrics:            dict，例如 {"map50": 0.62, "epochs": 20}
+        model_path:         最佳模型檔案路徑（可選）
+        notes:              附加備註（可選）
+        per_class_metrics:  各類別 AP50 dict，例如 {"text": 0.85}（可選）
 
     Returns:
         True  = API 更新成功
@@ -44,7 +49,11 @@ def report_result(
         return False
 
     base = os.environ.get("MODELHUB_API_URL", "http://localhost:8000")
-    key = os.environ.get("MODELHUB_API_KEY", "modelhub-dev-key-2026")
+    key = os.environ.get("MODELHUB_API_KEY")
+    if not key:
+        logger.warning("MODELHUB_API_KEY 未設定，跳過回寫")
+        print("[modelhub_report] WARN: MODELHUB_API_KEY 未設定，跳過回寫", file=sys.stderr)
+        return False
 
     status = "trained" if passed else "training_failed"
     payload = {
@@ -52,6 +61,7 @@ def report_result(
         "metrics": metrics,
         "model_path": model_path,
         "notes": notes,
+        "per_class_metrics": per_class_metrics,
     }
 
     try:

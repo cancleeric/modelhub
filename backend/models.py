@@ -88,6 +88,8 @@ class Submission(Base):
     # --- 資料集狀態（dataset unblock）---
     dataset_status = Column(String, nullable=False, default="ready")  # ready/missing_labels/missing_data/partial
     blocked_reason = Column(String, nullable=True)
+    # --- Sprint 13 P2-A: per-class metrics（JSON string, {class_name: ap50}）---
+    per_class_metrics = Column(String, nullable=True)
     # --- 時間戳記 ---
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -178,6 +180,8 @@ _MIGRATIONS = [
     ("submissions", "blocked_reason",           "TEXT"),
     # Sprint 10: 訓練產出路徑（取代 dataset_path 借用方案）
     ("submissions", "model_output_path",        "TEXT"),
+    # Sprint 13 P2-A: per-class AP50 metrics（JSON string）
+    ("submissions", "per_class_metrics",        "TEXT"),
 ]
 
 

@@ -49,10 +49,11 @@ class SubmissionCreate(BaseModel):
 
 class TrainingResultUpdate(BaseModel):
     """Sprint 8.2 — 訓練腳本回寫用 schema"""
-    status: str                          # "trained" | "training_failed"
-    metrics: Optional[dict] = None      # {"map50": 0.62, "epochs": 20, ...}
+    status: str                                    # "trained" | "training_failed"
+    metrics: Optional[dict] = None                # {"map50": 0.62, "epochs": 20, ...}
     model_path: Optional[str] = None
     notes: Optional[str] = None
+    per_class_metrics: Optional[dict] = None      # Sprint 13 P2-A: {class_name: ap50}
 
 
 class SubmissionUpdate(BaseModel):
@@ -279,7 +280,12 @@ async def update_training_result(
     Sprint 8.2 — 訓練腳本完成後自動回寫狀態。
 
     允許 status: trained | training_failed
+    來源狀態必須是：training、training_failed（重送）、approved（自動補 start）
     同時更新 training_completed_at, kaggle_status, blocked_reason（如需要）
+    Sprint 13 P0-B: 加入狀態機前置檢查
+    Sprint 13 P2-C: training_failed 時自動寫 retrain_suggested history
+    Sprint 13 P2-D: 同步更新 ModelVersion.pass_fail
+    Sprint 13 P2-A: 儲存 per_class_metrics
     """
     valid_statuses = {"trained", "training_failed"}
     if payload.status not in valid_statuses:
@@ -292,8 +298,30 @@ async def update_training_result(
     if not obj:
         raise HTTPException(status_code=404, detail="Submission not found")
 
+    # Sprint 13 P0-B: 狀態機前置檢查
+    allowed_source_statuses = {"training", "training_failed", "approved"}
+    if obj.status not in allowed_source_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"需求單 {req_no} 目前狀態為 {obj.status!r}，"
+                f"不允許直接更新訓練結果。"
+                f"允許的來源狀態：{sorted(allowed_source_statuses)}"
+            ),
+        )
+
+    now = datetime.utcnow()
+
+    # 若來源狀態為 approved，自動補 training transition
+    if obj.status == "approved":
+        obj.status = "training"
+        obj.training_started_at = now
+        if obj.total_attempts is None:
+            obj.total_attempts = 0
+        obj.total_attempts += 1
+
     obj.status = payload.status
-    obj.training_completed_at = datetime.utcnow()
+    obj.training_completed_at = now
 
     if payload.metrics:
         # 把 metrics 中的 map50 / map50_95 同步寫回標準欄位（方便查詢）
@@ -303,12 +331,18 @@ async def update_training_result(
                 obj.map50_threshold = float(m["map50"])
             except Exception:
                 pass
-        if "model_path" not in (payload.model_path or ""):
+
+    # Sprint 13 P2-A: 儲存 per_class_metrics
+    if payload.per_class_metrics:
+        import json as _json
+        try:
+            obj.per_class_metrics = _json.dumps(payload.per_class_metrics, ensure_ascii=False)
+        except Exception:
             pass
 
     if payload.model_path:
         obj.model_output_path = payload.model_path  # Sprint 10: 寫入專屬欄位
-        # N3: 同步寫入對應 ModelVersion.file_path（若為空）
+        # N3: 同步寫入對應 ModelVersion.file_path 及 pass_fail
         try:
             from models import ModelVersion
             mv = (
@@ -317,8 +351,20 @@ async def update_training_result(
                 .order_by(ModelVersion.id.desc())
                 .first()
             )
-            if mv and not mv.file_path:
-                mv.file_path = payload.model_path
+            if mv:
+                if not mv.file_path:
+                    mv.file_path = payload.model_path
+                # Sprint 13 P2-D: 同步更新 pass_fail
+                map50_val = None
+                if payload.metrics and "map50" in payload.metrics:
+                    try:
+                        map50_val = float(payload.metrics["map50"])
+                    except Exception:
+                        pass
+                if map50_val is not None and obj.map50_target is not None:
+                    mv.pass_fail = "pass" if map50_val >= obj.map50_target else "fail"
+                elif map50_val is not None and obj.map50_threshold is not None:
+                    mv.pass_fail = "pass" if map50_val >= obj.map50_threshold else "fail"
         except Exception:
             pass
 
@@ -329,6 +375,47 @@ async def update_training_result(
     if payload.status == "training_failed" and not obj.blocked_reason:
         note_text = payload.notes or "訓練失敗"
         obj.blocked_reason = f"[sprint8.2] {note_text}"
+
+    # Sprint 13 P2-C: training_failed 且達最大重試次數 → 寫 retrain_suggested history
+    if payload.status == "training_failed":
+        retry_count = obj.retry_count or 0
+        max_retries = obj.max_retries if obj.max_retries is not None else 2
+        if retry_count >= max_retries:
+            from models import SubmissionHistory
+            from notifications import notify_event
+            import json as _json_hist
+            map50_val_hist = None
+            if payload.metrics and "map50" in payload.metrics:
+                try:
+                    map50_val_hist = float(payload.metrics["map50"])
+                except Exception:
+                    pass
+            map50_target_hist = obj.map50_target or obj.map50_threshold
+            gap_desc = ""
+            if map50_val_hist is not None and map50_target_hist is not None:
+                gap = map50_target_hist - map50_val_hist
+                gap_desc = f"mAP50={map50_val_hist:.4f}，與 baseline 差距 {gap:+.4f}"
+            else:
+                gap_desc = payload.notes or "詳見訓練 log"
+            hist_note = f"訓練失敗達最大重試次數（{max_retries}）：{gap_desc}"
+            hist = SubmissionHistory(
+                req_no=req_no,
+                action="retrain_suggested",
+                actor="modelhub_auto",
+                note=hist_note,
+                meta=_json_hist.dumps({
+                    "retry_count": retry_count,
+                    "max_retries": max_retries,
+                    "map50": map50_val_hist,
+                    "map50_target": map50_target_hist,
+                }, ensure_ascii=False),
+            )
+            db.add(hist)
+            import asyncio as _asyncio
+            try:
+                _asyncio.create_task(notify_event("retrain_suggested", obj, note=hist_note))
+            except RuntimeError:
+                pass  # 不在 event loop 中時跳過，不阻斷
 
     db.commit()
     db.refresh(obj)
