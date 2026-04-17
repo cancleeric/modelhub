@@ -8,10 +8,11 @@ const STATUS_STYLES: Record<string, string> = {
   accepted:  'bg-emerald-100 text-emerald-800',
   failed:    'bg-red-200 text-red-900',
   // model version statuses
-  active:         'bg-green-100 text-green-700',
-  retired:        'bg-gray-200 text-gray-600',
-  testing:        'bg-yellow-100 text-yellow-700',
-  pending_review: 'bg-blue-100 text-blue-700',
+  active:              'bg-green-100 text-green-700',
+  retired:             'bg-gray-200 text-gray-600',
+  testing:             'bg-yellow-100 text-yellow-700',
+  pending_review:      'bg-blue-100 text-blue-700',
+  pending_acceptance:  'bg-orange-100 text-orange-700',
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -23,10 +24,11 @@ const STATUS_LABELS: Record<string, string> = {
   trained:        '訓練完成',
   accepted:       '已驗收',
   failed:         '驗收失敗',
-  active:         '使用中',
-  retired:        '已退役',
-  testing:        '測試中',
-  pending_review: '待審核',
+  active:              '使用中',
+  retired:             '已退役',
+  testing:             '測試中',
+  pending_review:      '待審核',
+  pending_acceptance:  '待驗收',
 }
 
 interface Props {

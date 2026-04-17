@@ -1,21 +1,75 @@
 """
-auth.py — LIDS JWT 輕量認證 + API Key 認證
+auth.py — LIDS JWT + API Key 認證
 
-對 LIDS userinfo endpoint 驗證 Bearer token。
-READ endpoint 免驗，WRITE endpoint 必須帶 token。
-機器對機器下載端點使用 API Key（X-Api-Key header）。
+- Bearer token → 打 LIDS userinfo 驗證
+- X-Api-Key → 先查 DB (api_keys table，Sprint 7.1)，找不到 fallback env bootstrap key
 """
 
+import logging
 import os
+from datetime import datetime
+
 import httpx
 from fastapi import Depends, Header, HTTPException, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-MODELHUB_API_KEY = os.getenv("MODELHUB_API_KEY", "modelhub-dev-key-2026")
+logger = logging.getLogger("modelhub.auth")
+
+_BOOTSTRAP_KEY_RAW = os.getenv("MODELHUB_API_KEY")
+
+if not _BOOTSTRAP_KEY_RAW:
+    logger.warning(
+        "MODELHUB_API_KEY environment variable is not set. "
+        "Bootstrap API key authentication is DISABLED. "
+        "Only DB-backed API keys will be accepted."
+    )
+
+# 明確拒絕已知的預設 dev key（即使 env 被設成這個值）
+_KNOWN_INSECURE_KEYS = {"modelhub-dev-key-2026"}
+
+
+def _verify_api_key_db(x_api_key: str) -> dict | None:
+    """查 DB api_keys table，成功回 {sub,name}，失敗回 None。"""
+    if not x_api_key:
+        return None
+    try:
+        from models import SessionLocal, ApiKey
+    except Exception:
+        return None
+    db = SessionLocal()
+    try:
+        row = db.query(ApiKey).filter(ApiKey.key == x_api_key, ApiKey.disabled == False).first()  # noqa: E712
+        if not row:
+            return None
+        row.last_used_at = datetime.utcnow()
+        db.commit()
+        return {"sub": f"api_key:{row.id}", "name": row.name}
+    finally:
+        db.close()
+
+
+def verify_api_key(x_api_key: str) -> dict | None:
+    """回 userinfo dict 或 None。先查 DB，fallback env bootstrap key（拒絕 insecure 預設值）。"""
+    if not x_api_key:
+        return None
+    # 拒絕已知不安全預設值
+    if x_api_key in _KNOWN_INSECURE_KEYS:
+        logger.warning(
+            "Rejected authentication attempt using known insecure default API key. "
+            "Set MODELHUB_API_KEY to a secure value."
+        )
+        return None
+    hit = _verify_api_key_db(x_api_key)
+    if hit:
+        return hit
+    # fallback: env bootstrap key（僅在有設定且非 insecure 時才允許）
+    if _BOOTSTRAP_KEY_RAW and x_api_key == _BOOTSTRAP_KEY_RAW:
+        return {"sub": "api_key:bootstrap", "name": "bootstrap"}
+    return None
 
 
 async def get_api_key(x_api_key: str = Header(None)) -> str:
-    if x_api_key != MODELHUB_API_KEY:
+    if not verify_api_key(x_api_key):
         raise HTTPException(status_code=401, detail="Invalid API key")
     return x_api_key
 
@@ -72,10 +126,11 @@ async def get_current_user_or_api_key(
     機器對機器呼叫（如 AICAD pipeline）用 API Key 即可。
     回傳 userinfo dict 或 {"sub": "api_key", "name": "service_account"}。
     """
-    # 優先嘗試 API Key
+    # 優先嘗試 API Key（DB → bootstrap env）
     if x_api_key is not None:
-        if x_api_key == MODELHUB_API_KEY:
-            return {"sub": "api_key", "name": "service_account"}
+        hit = verify_api_key(x_api_key)
+        if hit:
+            return hit
         raise HTTPException(status_code=401, detail="Invalid API key")
 
     # fallback: LIDS Bearer token

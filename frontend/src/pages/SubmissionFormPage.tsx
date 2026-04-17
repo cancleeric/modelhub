@@ -76,13 +76,21 @@ export default function SubmissionFormPage() {
     input_spec: '',
     dataset_source: '',
     dataset_count: '',
+    dataset_train_count: '',
+    dataset_val_count: '',
+    dataset_test_count: '',
     label_format: '',
     expected_delivery: '',
     priority: 'P2',
     model_type: 'detection',
+    kaggle_dataset_url: '',
+    max_budget_usd: '5.0',
+    max_retries: '2',
   })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const [warnings, setWarnings] = useState<string[]>([])
+  const [suggestions, setSuggestions] = useState<string[]>([])
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>,
@@ -110,6 +118,7 @@ export default function SubmissionFormPage() {
     e.preventDefault()
     setSubmitting(true)
     setError('')
+    setWarnings([])
     try {
       const payload = {
         ...form,
@@ -118,9 +127,22 @@ export default function SubmissionFormPage() {
         map50_95_target: form.map50_95_target ? parseFloat(form.map50_95_target) : undefined,
         inference_latency_ms: form.inference_latency_ms ? parseInt(form.inference_latency_ms) : undefined,
         model_size_limit_mb: form.model_size_limit_mb ? parseInt(form.model_size_limit_mb) : undefined,
+        dataset_train_count: form.dataset_train_count ? parseInt(form.dataset_train_count) : undefined,
+        dataset_val_count: form.dataset_val_count ? parseInt(form.dataset_val_count) : undefined,
+        dataset_test_count: form.dataset_test_count ? parseInt(form.dataset_test_count) : undefined,
+        max_budget_usd: form.max_budget_usd ? parseFloat(form.max_budget_usd) : undefined,
+        max_retries: form.max_retries ? parseInt(form.max_retries) : undefined,
       }
-      const created = await submissionsApi.create(payload)
-      navigate(`/submissions/${created.req_no}`)
+      const result = await submissionsApi.create(payload)
+      const hasWarnings = result.warnings && result.warnings.length > 0
+      const hasSuggestions = result.suggestions && result.suggestions.length > 0
+      if (hasWarnings || hasSuggestions) {
+        setWarnings(result.warnings ?? [])
+        setSuggestions(result.suggestions ?? [])
+        setTimeout(() => navigate(`/submissions/${result.submission.req_no}`), 4500)
+      } else {
+        navigate(`/submissions/${result.submission.req_no}`)
+      }
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
@@ -140,6 +162,29 @@ export default function SubmissionFormPage() {
           <div className="bg-red-50 border border-red-200 text-red-700 rounded px-4 py-2 text-sm">
             {error}
           </div>
+        )}
+        {warnings.length > 0 && (
+          <div className="bg-yellow-50 border border-yellow-300 text-yellow-800 rounded px-4 py-2 text-sm">
+            <div className="font-medium mb-1">⚠️ 送出成功，但有以下提醒：</div>
+            <ul className="list-disc list-inside space-y-0.5">
+              {warnings.map((w, i) => (
+                <li key={i}>{w}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {suggestions.length > 0 && (
+          <div className="bg-blue-50 border border-blue-300 text-blue-800 rounded px-4 py-2 text-sm">
+            <div className="font-medium mb-1">💡 智能建議（Anemone LLM）：</div>
+            <ul className="list-disc list-inside space-y-0.5">
+              {suggestions.map((s, i) => (
+                <li key={i}>{s}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {(warnings.length > 0 || suggestions.length > 0) && (
+          <p className="text-xs text-gray-500">4 秒後自動跳轉詳情頁...</p>
         )}
 
         {/* Template Selector */}
@@ -372,6 +417,42 @@ export default function SubmissionFormPage() {
           </Field>
         </div>
 
+        <div className="grid grid-cols-3 gap-4">
+          <Field label="Train 數量">
+            <input
+              name="dataset_train_count"
+              value={form.dataset_train_count}
+              onChange={handleChange}
+              type="number"
+              min="0"
+              className="input"
+              placeholder="3500"
+            />
+          </Field>
+          <Field label="Validation 數量">
+            <input
+              name="dataset_val_count"
+              value={form.dataset_val_count}
+              onChange={handleChange}
+              type="number"
+              min="0"
+              className="input"
+              placeholder="1000"
+            />
+          </Field>
+          <Field label="Test 數量">
+            <input
+              name="dataset_test_count"
+              value={form.dataset_test_count}
+              onChange={handleChange}
+              type="number"
+              min="0"
+              className="input"
+              placeholder="500"
+            />
+          </Field>
+        </div>
+
         <div className="grid grid-cols-2 gap-4">
           <Field label="標注格式 *" required>
             <input
@@ -391,6 +472,43 @@ export default function SubmissionFormPage() {
               required
               className="input"
               placeholder="2026-05-01"
+            />
+          </Field>
+        </div>
+
+        <Field label="Kaggle dataset URL（選填）">
+          <input
+            name="kaggle_dataset_url"
+            value={form.kaggle_dataset_url}
+            onChange={handleChange}
+            className="input"
+            placeholder="https://www.kaggle.com/datasets/..."
+          />
+        </Field>
+
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="預算上限 (USD)">
+            <input
+              name="max_budget_usd"
+              value={form.max_budget_usd}
+              onChange={handleChange}
+              type="number"
+              step="0.5"
+              min="0"
+              className="input"
+              placeholder="5.0"
+            />
+          </Field>
+          <Field label="自動重試次數上限">
+            <input
+              name="max_retries"
+              value={form.max_retries}
+              onChange={handleChange}
+              type="number"
+              min="0"
+              max="5"
+              className="input"
+              placeholder="2"
             />
           </Field>
         </div>

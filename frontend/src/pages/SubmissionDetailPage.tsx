@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { submissionsApi, registryApi, type Submission } from '../api/client'
 import StatusBadge from '../components/StatusBadge'
+import RejectModal from '../components/RejectModal'
 
 const AVAILABLE_ACTIONS: Record<string, { action: string; label: string; color: string }[]> = {
   draft:    [{ action: 'submit', label: '提交審核', color: 'blue' }],
@@ -46,6 +47,7 @@ export default function SubmissionDetailPage() {
   const [resubmitNote, setResubmitNote] = useState('')
   const [kernelSlug, setKernelSlug] = useState('')
   const [kernelVersion, setKernelVersion] = useState('')
+  const [showRejectModal, setShowRejectModal] = useState(false)
 
   const { data: sub, isLoading } = useQuery({
     queryKey: ['submission', req_no],
@@ -79,6 +81,24 @@ export default function SubmissionDetailPage() {
       const msg =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
         '操作失敗'
+      setActionError(String(msg))
+    },
+  })
+
+  const rejectMut = useMutation({
+    mutationFn: ({ reasons, note }: { reasons: string[]; note: string }) =>
+      submissionsApi.reject(req_no!, { reasons, note }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['submission', req_no] })
+      qc.invalidateQueries({ queryKey: ['submissions'] })
+      qc.invalidateQueries({ queryKey: ['stats'] })
+      setShowRejectModal(false)
+      setActionError('')
+    },
+    onError: (err: unknown) => {
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+        '退件失敗'
       setActionError(String(msg))
     },
   })
@@ -248,6 +268,15 @@ export default function SubmissionDetailPage() {
                     {actionMut.isPending ? '處理中...' : label}
                   </button>
                 ))}
+                {sub.status === 'submitted' && (
+                  <button
+                    disabled={actionMut.isPending || rejectMut.isPending}
+                    onClick={() => setShowRejectModal(true)}
+                    className="px-4 py-2 text-sm rounded font-medium bg-red-600 hover:bg-red-700 text-white disabled:opacity-50"
+                  >
+                    退件
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -458,6 +487,15 @@ export default function SubmissionDetailPage() {
             </ol>
           )}
         </div>
+      )}
+
+      {showRejectModal && (
+        <RejectModal
+          submission={sub}
+          onConfirm={(reasons, note) => rejectMut.mutate({ reasons, note })}
+          onCancel={() => setShowRejectModal(false)}
+          isPending={rejectMut.isPending}
+        />
       )}
     </div>
   )

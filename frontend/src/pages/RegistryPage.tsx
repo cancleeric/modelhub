@@ -28,13 +28,25 @@ function downloadModel(id: number, filename: string) {
     .catch((err: Error) => alert(err.message))
 }
 
+const STATUS_OPTIONS = ['', 'active', 'pending_acceptance', 'retired', 'testing']
+
 export default function RegistryPage() {
   const [productFilter, setProductFilter] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
+  const [reqNoFilter, setReqNoFilter] = useState('')
+  const [onlyCurrent, setOnlyCurrent] = useState(false)
 
   const { data, isLoading } = useQuery({
-    queryKey: ['registry', productFilter],
-    queryFn: () => registryApi.list({ product: productFilter || undefined }),
+    queryKey: ['registry', productFilter, statusFilter, reqNoFilter],
+    queryFn: () =>
+      registryApi.list({
+        product: productFilter || undefined,
+        status: statusFilter || undefined,
+        req_no: reqNoFilter || undefined,
+      }),
   })
+
+  const filtered = data?.filter((v) => (onlyCurrent ? v.is_current : true))
 
   return (
     <div>
@@ -42,7 +54,17 @@ export default function RegistryPage() {
         <h1 className="text-2xl font-bold text-gray-900">模型版本清冊</h1>
       </div>
 
-      <div className="flex gap-3 mb-4">
+      <div className="flex gap-3 mb-4 flex-wrap items-center">
+        <select
+          className="border rounded px-3 py-1.5 text-sm bg-white"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+        >
+          <option value="">全部狀態</option>
+          {STATUS_OPTIONS.filter(Boolean).map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
         <input
           type="text"
           placeholder="Product 篩選..."
@@ -50,11 +72,26 @@ export default function RegistryPage() {
           value={productFilter}
           onChange={(e) => setProductFilter(e.target.value)}
         />
+        <input
+          type="text"
+          placeholder="需求單號 (例：MH-2026-001)"
+          className="border rounded px-3 py-1.5 text-sm font-mono"
+          value={reqNoFilter}
+          onChange={(e) => setReqNoFilter(e.target.value)}
+        />
+        <label className="inline-flex items-center gap-1.5 text-sm text-gray-700">
+          <input
+            type="checkbox"
+            checked={onlyCurrent}
+            onChange={(e) => setOnlyCurrent(e.target.checked)}
+          />
+          僅顯示 current
+        </label>
       </div>
 
       {isLoading && <p className="text-gray-500">載入中...</p>}
 
-      {data && (
+      {filtered && (
         <div className="bg-white rounded shadow overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50 border-b">
@@ -72,7 +109,7 @@ export default function RegistryPage() {
               </tr>
             </thead>
             <tbody className="divide-y">
-              {data.map((v) => (
+              {filtered.map((v) => (
                 <tr key={v.id} className={`hover:bg-gray-50 ${v.is_current ? 'bg-green-50' : ''}`}>
                   <td className="px-4 py-3">
                     <Link
@@ -138,7 +175,7 @@ export default function RegistryPage() {
                   </td>
                 </tr>
               ))}
-              {data.length === 0 && (
+              {filtered.length === 0 && (
                 <tr>
                   <td colSpan={10} className="text-center py-8 text-gray-400">
                     無資料

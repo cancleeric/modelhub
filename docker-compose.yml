@@ -9,8 +9,17 @@ services:
       - ./backend:/app
       - /Users/yinghaowang/HurricaneCore/docker-data/modelhub/db:/app/data
       - /Users/yinghaowang/HurricaneCore/docker-data/modelhub/models:/app/data/models
+      # Sprint 6.1: Kaggle credential（host 若沒有該檔會 bind 空目錄，poller 會自動 skip）
+      - /Users/yinghaowang/HurricaneCore/docker-data/modelhub/kaggle:/root/.kaggle:ro
     environment:
-      - MODELHUB_API_KEY=modelhub-dev-key-2026
+      # 安全性：請設定非預設值。取得方式：hvault get hurricanecore/dev/MODELHUB_API_KEY
+      - MODELHUB_API_KEY=${MODELHUB_API_KEY:-modelhub-dev-key-2026}
+      - MODELHUB_KAGGLE_POLL_INTERVAL=60
+      - MODELHUB_GPU_USD_PER_HOUR=0.5
+      # ANEMONE_API_TOKEN: 從 Hurricane Vault 取得 (hurricanecore/dev/ANEMONE_API_TOKEN)
+      # 設定方式：hvault run --prefix "hurricanecore/dev/" -- docker-compose up
+      # 或在 docker-compose.override.yml 中覆寫此值
+      - ANEMONE_API_TOKEN=${ANEMONE_API_TOKEN:-}
     restart: unless-stopped
     networks:
       - squid_dev_network

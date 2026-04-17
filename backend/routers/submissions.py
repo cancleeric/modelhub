@@ -86,6 +86,7 @@ class SubmissionUpdate(BaseModel):
     reviewer_note: Optional[str] = None
     reviewed_by: Optional[str] = None
     reviewed_at: Optional[datetime] = None
+    model_output_path: Optional[str] = None
 
 
 class SubmissionOut(BaseModel):
@@ -116,6 +117,7 @@ class SubmissionOut(BaseModel):
     kaggle_dataset_url: Optional[str]
     dataset_path: Optional[str]
     dataset_train_count: Optional[int]
+    model_output_path: Optional[str] = None
     expected_delivery: Optional[str]
     status: str
     reviewer_note: Optional[str]
@@ -306,7 +308,7 @@ async def update_training_result(
             pass
 
     if payload.model_path:
-        obj.dataset_path = payload.model_path  # 借用 dataset_path 存最佳 model 路徑
+        obj.model_output_path = payload.model_path  # Sprint 10: 寫入專屬欄位
 
     if payload.notes:
         obj.reviewer_note = (obj.reviewer_note or "") + f"\n[auto] {payload.notes}"

@@ -321,4 +321,18 @@ export const registryApi = {
       accepted_by?: string
     },
   ) => api.post<ModelVersion>(`/api/registry/${id}/accept`, data).then((r) => r.data),
+
+  /**
+   * 取得指定 product + model_name 的最新 current pass 模型版本。
+   * 供跨公司機器對機器呼叫，使用 API Key 認證（X-Api-Key header）。
+   *
+   * 用法範例：
+   *   const model = await registryApi.latest('AICAD', 'pid-symbol-classifier')
+   */
+  latest: (product: string, modelName: string) =>
+    api
+      .get<ModelVersion>('/api/registry/latest', {
+        params: { product, model_name: modelName },
+      })
+      .then((r) => r.data),
 }

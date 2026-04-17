@@ -47,6 +47,8 @@ class Submission(Base):
     kaggle_dataset_url = Column(String, nullable=True)
     dataset_path = Column(String, nullable=True)
     dataset_train_count = Column(Integer, nullable=True)
+    # Sprint 10: 訓練產出的最佳模型路徑（取代借用 dataset_path 的臨時方案）
+    model_output_path = Column(String, nullable=True)
     # --- 時程 ---
     expected_delivery = Column(String, nullable=True)
     # --- 狀態機 ---
@@ -168,6 +170,8 @@ _MIGRATIONS = [
     # Dataset unblock — 資料集狀態欄位
     ("submissions", "dataset_status",           "VARCHAR DEFAULT 'ready'"),
     ("submissions", "blocked_reason",           "TEXT"),
+    # Sprint 10: 訓練產出路徑（取代 dataset_path 借用方案）
+    ("submissions", "model_output_path",        "TEXT"),
 ]
 
 
