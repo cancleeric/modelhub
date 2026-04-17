@@ -82,7 +82,6 @@ class SubmissionUpdate(BaseModel):
     dataset_path: Optional[str] = None
     dataset_train_count: Optional[int] = None
     expected_delivery: Optional[str] = None
-    status: Optional[str] = None
     reviewer_note: Optional[str] = None
     reviewed_by: Optional[str] = None
     reviewed_at: Optional[datetime] = None
@@ -309,6 +308,19 @@ async def update_training_result(
 
     if payload.model_path:
         obj.model_output_path = payload.model_path  # Sprint 10: 寫入專屬欄位
+        # N3: 同步寫入對應 ModelVersion.file_path（若為空）
+        try:
+            from models import ModelVersion
+            mv = (
+                db.query(ModelVersion)
+                .filter(ModelVersion.req_no == req_no)
+                .order_by(ModelVersion.id.desc())
+                .first()
+            )
+            if mv and not mv.file_path:
+                mv.file_path = payload.model_path
+        except Exception:
+            pass
 
     if payload.notes:
         obj.reviewer_note = (obj.reviewer_note or "") + f"\n[auto] {payload.notes}"

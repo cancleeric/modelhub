@@ -162,3 +162,62 @@ async def get_current_user_or_api_key(
 # 方便在 router 直接 import 用
 CurrentUser = Depends(get_current_user)
 CurrentUserOrApiKey = Depends(get_current_user_or_api_key)
+
+# P3-3: claim-based role check
+# MODELHUB_ROLE_CLAIM: userinfo 中的 claim key（預設 modelhub_role）
+# SKIP_ROLE_CHECK: 設為 "true" 時跳過 role 檢查（dev 環境 LIDS 未設 claim 時用）
+_ROLE_CLAIM_KEY = os.getenv("MODELHUB_ROLE_CLAIM", "modelhub_role")
+_SKIP_ROLE_CHECK = os.getenv("SKIP_ROLE_CHECK", "false").lower() == "true"
+
+
+def require_role(role: str):
+    """
+    Dependency factory：要求 userinfo 中 MODELHUB_ROLE_CLAIM == role。
+    SKIP_ROLE_CHECK=true 時略過（dev 環境用）。
+    API Key 使用者略過 role 檢查（機器對機器）。
+    """
+    async def _check(
+        credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
+        x_api_key: str = Header(None),
+    ) -> dict:
+        if _SKIP_ROLE_CHECK:
+            return {}
+        # API Key 使用者略過 role 檢查
+        if x_api_key is not None:
+            hit = verify_api_key(x_api_key)
+            if hit:
+                return hit
+            raise HTTPException(status_code=401, detail="Invalid API key")
+        if credentials is None:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        # 取 userinfo
+        token = credentials.credentials
+        userinfo: dict = {}
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            for url in [LIDS_USERINFO_URL, LIDS_USERINFO_URL_FALLBACK]:
+                try:
+                    resp = await client.get(
+                        url,
+                        headers={"Authorization": f"Bearer {token}"},
+                    )
+                    if resp.status_code == 200:
+                        userinfo = resp.json()
+                        break
+                    if resp.status_code in (401, 403):
+                        raise HTTPException(status_code=401, detail="Invalid or expired token")
+                except httpx.ConnectError:
+                    continue
+                except HTTPException:
+                    raise
+                except Exception:
+                    continue
+        if not userinfo:
+            raise HTTPException(status_code=401, detail="Unable to verify token (LIDS unreachable)")
+        user_role = userinfo.get(_ROLE_CLAIM_KEY)
+        if user_role != role:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Requires role '{role}', current='{user_role}'",
+            )
+        return userinfo
+    return Depends(_check)

@@ -42,6 +42,7 @@ export default function App() {
                   <Routes>
                     <Route path="/" element={<SubmissionListPage />} />
                     <Route path="/submit" element={<SubmissionFormPage />} />
+                    <Route path="/submit/:req_no" element={<SubmissionFormPage />} />
                     <Route path="/submissions/:req_no" element={<SubmissionDetailPage />} />
                     <Route path="/review" element={<ReviewPage />} />
                     <Route path="/registry" element={<RegistryPage />} />

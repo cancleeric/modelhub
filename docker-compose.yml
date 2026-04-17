@@ -20,6 +20,9 @@ services:
       # 設定方式：hvault run --prefix "hurricanecore/dev/" -- docker-compose up
       # 或在 docker-compose.override.yml 中覆寫此值
       - ANEMONE_API_TOKEN=${ANEMONE_API_TOKEN:-}
+      # DATABASE_URL: 從 Hurricane Vault 取得 (hurricanecore/dev/MODELHUB_DATABASE_URL)
+      # 未設時使用 SQLite（預設值）；PostgreSQL 格式：postgresql://user:pass@host:5432/dbname
+      - DATABASE_URL=${DATABASE_URL:-}
     restart: unless-stopped
     networks:
       - squid_dev_network

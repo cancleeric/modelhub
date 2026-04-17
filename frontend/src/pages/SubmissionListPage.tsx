@@ -65,7 +65,7 @@ export default function SubmissionListPage() {
     const pending = allData.filter((s) => s.status === 'submitted').length
     const training = allData.filter((s) => s.status === 'training').length
     const approvedThisWeek = allData.filter(
-      (s) => s.status === 'approved' && new Date(s.created_at) >= weekStart,
+      (s) => s.status === 'approved' && s.reviewed_at && new Date(s.reviewed_at) >= weekStart,
     ).length
     const totalGpuSec = allData.reduce((acc, s) => acc + (s.gpu_seconds || 0), 0)
     const totalGpuHours = Math.floor(totalGpuSec / 3600)

@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
 import { submissionsApi } from '../api/client'
 
 const PRODUCTS = ['AICAD', '打工仔', '天機', 'RS Conch', '其他']
@@ -57,40 +57,83 @@ const MODEL_TEMPLATES: Record<ModelTemplateKey, ModelTemplate> = {
 
 const MODEL_TYPE_OPTIONS: ModelTemplateKey[] = ['detection', 'classification', 'segmentation', 'ocr']
 
+const EMPTY_FORM = {
+  req_name: '',
+  product: 'AICAD',
+  company: '',
+  submitter: '',
+  purpose: '',
+  class_list: '',
+  map50_target: '',
+  map50_threshold: '',
+  map50_95_target: '',
+  inference_latency_ms: '',
+  model_size_limit_mb: '',
+  arch: '',
+  input_spec: '',
+  dataset_source: '',
+  dataset_count: '',
+  dataset_train_count: '',
+  dataset_val_count: '',
+  dataset_test_count: '',
+  label_format: '',
+  expected_delivery: '',
+  priority: 'P2',
+  model_type: 'detection',
+  kaggle_dataset_url: '',
+  max_budget_usd: '5.0',
+  max_retries: '2',
+}
+
 export default function SubmissionFormPage() {
   const navigate = useNavigate()
+  // P1-3: 支援 /submit/:req_no 路由，載入時 fetch 並 pre-fill
+  const { req_no } = useParams<{ req_no?: string }>()
   const [appliedTemplate, setAppliedTemplate] = useState<ModelTemplateKey | null>(null)
-  const [form, setForm] = useState({
-    req_name: '',
-    product: 'AICAD',
-    company: '',
-    submitter: '',
-    purpose: '',
-    class_list: '',
-    map50_target: '',
-    map50_threshold: '',
-    map50_95_target: '',
-    inference_latency_ms: '',
-    model_size_limit_mb: '',
-    arch: '',
-    input_spec: '',
-    dataset_source: '',
-    dataset_count: '',
-    dataset_train_count: '',
-    dataset_val_count: '',
-    dataset_test_count: '',
-    label_format: '',
-    expected_delivery: '',
-    priority: 'P2',
-    model_type: 'detection',
-    kaggle_dataset_url: '',
-    max_budget_usd: '5.0',
-    max_retries: '2',
-  })
+  const [form, setForm] = useState(EMPTY_FORM)
+  const [draftReqNo, setDraftReqNo] = useState<string | null>(req_no ?? null)
   const [submitting, setSubmitting] = useState(false)
+  const [savingDraft, setSavingDraft] = useState(false)
   const [error, setError] = useState('')
   const [warnings, setWarnings] = useState<string[]>([])
   const [suggestions, setSuggestions] = useState<string[]>([])
+  const [draftSaved, setDraftSaved] = useState(false)
+
+  // P1-3: 若路由帶 req_no，載入草稿並 pre-fill
+  useEffect(() => {
+    if (!req_no) return
+    submissionsApi.get(req_no).then((sub) => {
+      if (sub.status !== 'draft') return
+      setDraftReqNo(sub.req_no)
+      setForm({
+        req_name: sub.req_name ?? '',
+        product: sub.product ?? 'AICAD',
+        company: sub.company ?? '',
+        submitter: sub.submitter ?? '',
+        purpose: sub.purpose ?? '',
+        class_list: sub.class_list ?? '',
+        map50_target: sub.map50_target?.toString() ?? '',
+        map50_threshold: sub.map50_threshold?.toString() ?? '',
+        map50_95_target: sub.map50_95_target?.toString() ?? '',
+        inference_latency_ms: sub.inference_latency_ms?.toString() ?? '',
+        model_size_limit_mb: sub.model_size_limit_mb?.toString() ?? '',
+        arch: sub.arch ?? '',
+        input_spec: sub.input_spec ?? '',
+        dataset_source: sub.dataset_source ?? '',
+        dataset_count: sub.dataset_count ?? '',
+        dataset_train_count: '',
+        dataset_val_count: sub.dataset_val_count?.toString() ?? '',
+        dataset_test_count: sub.dataset_test_count?.toString() ?? '',
+        label_format: sub.label_format ?? '',
+        expected_delivery: sub.expected_delivery ?? '',
+        priority: sub.priority ?? 'P2',
+        model_type: sub.model_type ?? 'detection',
+        kaggle_dataset_url: sub.kaggle_dataset_url ?? '',
+        max_budget_usd: sub.max_budget_usd?.toString() ?? '5.0',
+        max_retries: sub.max_retries?.toString() ?? '2',
+      })
+    }).catch(() => {})
+  }, [req_no])
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>,
@@ -114,25 +157,85 @@ export default function SubmissionFormPage() {
     setAppliedTemplate(type)
   }
 
+  const buildPayload = () => ({
+    ...form,
+    map50_target: form.map50_target ? parseFloat(form.map50_target) : undefined,
+    map50_threshold: form.map50_threshold ? parseFloat(form.map50_threshold) : undefined,
+    map50_95_target: form.map50_95_target ? parseFloat(form.map50_95_target) : undefined,
+    inference_latency_ms: form.inference_latency_ms ? parseInt(form.inference_latency_ms) : undefined,
+    model_size_limit_mb: form.model_size_limit_mb ? parseInt(form.model_size_limit_mb) : undefined,
+    dataset_train_count: form.dataset_train_count ? parseInt(form.dataset_train_count) : undefined,
+    dataset_val_count: form.dataset_val_count ? parseInt(form.dataset_val_count) : undefined,
+    dataset_test_count: form.dataset_test_count ? parseInt(form.dataset_test_count) : undefined,
+    max_budget_usd: form.max_budget_usd ? parseFloat(form.max_budget_usd) : undefined,
+    max_retries: form.max_retries ? parseInt(form.max_retries) : undefined,
+  })
+
+  // P1-3: 儲存草稿 — POST 建立 draft，不跳轉，更新 URL
+  const handleSaveDraft = async () => {
+    setSavingDraft(true)
+    setError('')
+    try {
+      const payload = buildPayload()
+      if (draftReqNo) {
+        // 已有草稿：PATCH 更新
+        await submissionsApi.update(draftReqNo, payload)
+      } else {
+        // 新草稿：POST 建立 status=draft
+        const result = await submissionsApi.create(payload)
+        const newReqNo = result.submission.req_no
+        setDraftReqNo(newReqNo)
+        // 不 navigate，只更新 URL
+        window.history.replaceState(null, '', `/submit/${newReqNo}`)
+      }
+      setDraftSaved(true)
+      setTimeout(() => setDraftSaved(false), 3000)
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+        '儲存草稿失敗'
+      setError(String(msg))
+    } finally {
+      setSavingDraft(false)
+    }
+  }
+
+  // P1-3: 繼續編輯後送審（呼叫 submit action）
+  const handleSubmitDraft = async () => {
+    if (!draftReqNo) {
+      setError('請先儲存草稿')
+      return
+    }
+    setSubmitting(true)
+    setError('')
+    try {
+      // 先 PATCH 更新欄位
+      await submissionsApi.update(draftReqNo, buildPayload())
+      // 再呼叫 submit action
+      await submissionsApi.action(draftReqNo, 'submit')
+      navigate(`/submissions/${draftReqNo}`)
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+        '提交失敗，請稍後再試'
+      setError(String(msg))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    // 若已有草稿 req_no，走 handleSubmitDraft
+    if (draftReqNo) {
+      await handleSubmitDraft()
+      return
+    }
     setSubmitting(true)
     setError('')
     setWarnings([])
     try {
-      const payload = {
-        ...form,
-        map50_target: form.map50_target ? parseFloat(form.map50_target) : undefined,
-        map50_threshold: form.map50_threshold ? parseFloat(form.map50_threshold) : undefined,
-        map50_95_target: form.map50_95_target ? parseFloat(form.map50_95_target) : undefined,
-        inference_latency_ms: form.inference_latency_ms ? parseInt(form.inference_latency_ms) : undefined,
-        model_size_limit_mb: form.model_size_limit_mb ? parseInt(form.model_size_limit_mb) : undefined,
-        dataset_train_count: form.dataset_train_count ? parseInt(form.dataset_train_count) : undefined,
-        dataset_val_count: form.dataset_val_count ? parseInt(form.dataset_val_count) : undefined,
-        dataset_test_count: form.dataset_test_count ? parseInt(form.dataset_test_count) : undefined,
-        max_budget_usd: form.max_budget_usd ? parseFloat(form.max_budget_usd) : undefined,
-        max_retries: form.max_retries ? parseInt(form.max_retries) : undefined,
-      }
+      const payload = buildPayload()
       const result = await submissionsApi.create(payload)
       const hasWarnings = result.warnings && result.warnings.length > 0
       const hasSuggestions = result.suggestions && result.suggestions.length > 0
@@ -155,7 +258,14 @@ export default function SubmissionFormPage() {
 
   return (
     <div className="max-w-2xl">
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">新增訓練需求單</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-bold text-gray-900">
+          {draftReqNo ? `草稿 ${draftReqNo}` : '新增訓練需求單'}
+        </h1>
+        {draftSaved && (
+          <span className="text-sm text-green-600 font-medium">草稿已儲存</span>
+        )}
+      </div>
 
       <form onSubmit={handleSubmit} className="bg-white rounded shadow p-6 space-y-4">
         {error && (
@@ -165,7 +275,7 @@ export default function SubmissionFormPage() {
         )}
         {warnings.length > 0 && (
           <div className="bg-yellow-50 border border-yellow-300 text-yellow-800 rounded px-4 py-2 text-sm">
-            <div className="font-medium mb-1">⚠️ 送出成功，但有以下提醒：</div>
+            <div className="font-medium mb-1">送出成功，但有以下提醒：</div>
             <ul className="list-disc list-inside space-y-0.5">
               {warnings.map((w, i) => (
                 <li key={i}>{w}</li>
@@ -175,7 +285,7 @@ export default function SubmissionFormPage() {
         )}
         {suggestions.length > 0 && (
           <div className="bg-blue-50 border border-blue-300 text-blue-800 rounded px-4 py-2 text-sm">
-            <div className="font-medium mb-1">💡 智能建議（Anemone LLM）：</div>
+            <div className="font-medium mb-1">智能建議（Anemone LLM）：</div>
             <ul className="list-disc list-inside space-y-0.5">
               {suggestions.map((s, i) => (
                 <li key={i}>{s}</li>
@@ -522,12 +632,32 @@ export default function SubmissionFormPage() {
             取消
           </button>
           <button
-            type="submit"
-            disabled={submitting}
-            className="px-4 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
+            type="button"
+            disabled={savingDraft}
+            onClick={handleSaveDraft}
+            className="px-4 py-2 text-sm border border-indigo-300 text-indigo-700 rounded hover:bg-indigo-50 disabled:opacity-50"
           >
-            {submitting ? '提交中...' : '儲存草稿'}
+            {savingDraft ? '儲存中...' : '儲存草稿'}
           </button>
+          {draftReqNo && (
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={handleSubmitDraft}
+              className="px-4 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {submitting ? '送審中...' : '送出審核'}
+            </button>
+          )}
+          {!draftReqNo && (
+            <button
+              type="submit"
+              disabled={submitting}
+              className="px-4 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {submitting ? '提交中...' : '直接送審'}
+            </button>
+          )}
         </div>
       </form>
 

@@ -48,6 +48,15 @@ export default function SubmissionDetailPage() {
   const [kernelSlug, setKernelSlug] = useState('')
   const [kernelVersion, setKernelVersion] = useState('')
   const [showRejectModal, setShowRejectModal] = useState(false)
+  const [showEditFields, setShowEditFields] = useState(false)
+  const [editFields, setEditFields] = useState({
+    class_list: '',
+    dataset_count: '',
+    dataset_val_count: '',
+    dataset_test_count: '',
+    dataset_source: '',
+    kaggle_dataset_url: '',
+  })
 
   const { data: sub, isLoading } = useQuery({
     queryKey: ['submission', req_no],
@@ -99,6 +108,20 @@ export default function SubmissionDetailPage() {
       const msg =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
         '退件失敗'
+      setActionError(String(msg))
+    },
+  })
+
+  const updateFieldsMut = useMutation({
+    mutationFn: (fields: Record<string, string | number | undefined>) =>
+      submissionsApi.update(req_no!, fields),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['submission', req_no] })
+    },
+    onError: (err: unknown) => {
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+        '更新欄位失敗'
       setActionError(String(msg))
     },
   })
@@ -206,6 +229,101 @@ export default function SubmissionDetailPage() {
               )}
 
               <div className="mt-4">
+                {/* P3-5: 可展開欄位編輯區 */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!showEditFields && sub) {
+                      setEditFields({
+                        class_list: sub.class_list || '',
+                        dataset_count: sub.dataset_count || '',
+                        dataset_val_count: sub.dataset_val_count?.toString() || '',
+                        dataset_test_count: sub.dataset_test_count?.toString() || '',
+                        dataset_source: sub.dataset_source || '',
+                        kaggle_dataset_url: sub.kaggle_dataset_url || '',
+                      })
+                    }
+                    setShowEditFields((v) => !v)
+                  }}
+                  className="text-sm text-indigo-600 hover:underline mb-2 flex items-center gap-1"
+                >
+                  {showEditFields ? '▲ 收起欄位編輯' : '▼ 編輯需求單欄位'}
+                </button>
+                {showEditFields && (
+                  <div className="border border-indigo-200 rounded p-3 mb-3 bg-indigo-50 space-y-2">
+                    <p className="text-xs text-indigo-700 font-medium">修改欄位後點「儲存變更」，再填補件說明送審</p>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-0.5">類別清單</label>
+                      <textarea
+                        rows={2}
+                        className="w-full border rounded p-2 text-sm"
+                        value={editFields.class_list}
+                        onChange={(e) => setEditFields((v) => ({ ...v, class_list: e.target.value }))}
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-0.5">資料集大小描述</label>
+                        <input
+                          className="w-full border rounded p-2 text-sm"
+                          value={editFields.dataset_count}
+                          onChange={(e) => setEditFields((v) => ({ ...v, dataset_count: e.target.value }))}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-0.5">資料來源</label>
+                        <input
+                          className="w-full border rounded p-2 text-sm"
+                          value={editFields.dataset_source}
+                          onChange={(e) => setEditFields((v) => ({ ...v, dataset_source: e.target.value }))}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-0.5">Validation 數量</label>
+                        <input
+                          type="number"
+                          className="w-full border rounded p-2 text-sm"
+                          value={editFields.dataset_val_count}
+                          onChange={(e) => setEditFields((v) => ({ ...v, dataset_val_count: e.target.value }))}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-0.5">Test 數量</label>
+                        <input
+                          type="number"
+                          className="w-full border rounded p-2 text-sm"
+                          value={editFields.dataset_test_count}
+                          onChange={(e) => setEditFields((v) => ({ ...v, dataset_test_count: e.target.value }))}
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-0.5">Kaggle dataset URL</label>
+                      <input
+                        className="w-full border rounded p-2 text-sm"
+                        value={editFields.kaggle_dataset_url}
+                        onChange={(e) => setEditFields((v) => ({ ...v, kaggle_dataset_url: e.target.value }))}
+                      />
+                    </div>
+                    <button
+                      disabled={updateFieldsMut.isPending}
+                      onClick={() => {
+                        const payload: Record<string, string | number | undefined> = {
+                          class_list: editFields.class_list || undefined,
+                          dataset_count: editFields.dataset_count || undefined,
+                          dataset_source: editFields.dataset_source || undefined,
+                          kaggle_dataset_url: editFields.kaggle_dataset_url || undefined,
+                          dataset_val_count: editFields.dataset_val_count ? parseInt(editFields.dataset_val_count) : undefined,
+                          dataset_test_count: editFields.dataset_test_count ? parseInt(editFields.dataset_test_count) : undefined,
+                        }
+                        updateFieldsMut.mutate(payload)
+                      }}
+                      className="px-3 py-1.5 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
+                    >
+                      {updateFieldsMut.isPending ? '儲存中...' : '儲存變更'}
+                    </button>
+                  </div>
+                )}
                 <textarea
                   rows={2}
                   className="w-full border rounded p-2 text-sm mb-2"

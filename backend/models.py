@@ -1,10 +1,16 @@
+import os
 from datetime import datetime
 from sqlalchemy import Boolean, Column, Integer, String, Float, DateTime, create_engine, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
-DATABASE_URL = "sqlite:////app/data/modelhub.db"
+# P3-1: 從 env 讀 DATABASE_URL；未設則用 SQLite（向後相容）
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:////app/data/modelhub.db")
 
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+# SQLite 需要 check_same_thread=False；PostgreSQL 不需要
+_is_sqlite = DATABASE_URL.startswith("sqlite")
+_connect_args = {"check_same_thread": False} if _is_sqlite else {}
+
+engine = create_engine(DATABASE_URL, connect_args=_connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
@@ -200,25 +206,43 @@ _DATASET_UNBLOCK_SEED = [
 
 
 def init_db():
-    Base.metadata.create_all(bind=engine)
-    with engine.connect() as conn:
-        for table, column, ddl in _MIGRATIONS:
-            try:
-                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
-                conn.commit()
-            except Exception:
-                pass  # 欄位已存在，忽略
-    # 填入工單阻塞原因（idempotent：只在欄位為空時寫入，不覆蓋已有內容）
-    with engine.connect() as conn:
-        for req_no, ds_status, reason in _DATASET_UNBLOCK_SEED:
-            conn.execute(
-                text(
-                    "UPDATE submissions SET dataset_status = :ds, blocked_reason = :r "
-                    "WHERE req_no = :rn AND (blocked_reason IS NULL OR blocked_reason = '')"
-                ),
-                {"ds": ds_status, "r": reason, "rn": req_no},
+    if _is_sqlite:
+        # SQLite: 保留原有 create_all + ALTER TABLE 手動 migration（向後相容）
+        Base.metadata.create_all(bind=engine)
+        with engine.connect() as conn:
+            for table, column, ddl in _MIGRATIONS:
+                try:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+                    conn.commit()
+                except Exception:
+                    pass  # 欄位已存在，忽略
+        # 填入工單阻塞原因（idempotent：只在欄位為空時寫入，不覆蓋已有內容）
+        with engine.connect() as conn:
+            for req_no, ds_status, reason in _DATASET_UNBLOCK_SEED:
+                conn.execute(
+                    text(
+                        "UPDATE submissions SET dataset_status = :ds, blocked_reason = :r "
+                        "WHERE req_no = :rn AND (blocked_reason IS NULL OR blocked_reason = '')"
+                    ),
+                    {"ds": ds_status, "r": reason, "rn": req_no},
+                )
+            conn.commit()
+    else:
+        # PostgreSQL: 走 alembic upgrade head
+        import subprocess
+        import sys
+        import os as _os
+        alembic_ini = _os.path.join(_os.path.dirname(__file__), "alembic.ini")
+        result = subprocess.run(
+            [sys.executable, "-m", "alembic", "-c", alembic_ini, "upgrade", "head"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            import logging
+            logging.getLogger("modelhub.models").error(
+                "alembic upgrade head failed: %s", result.stderr
             )
-        conn.commit()
 
 
 def get_db():
