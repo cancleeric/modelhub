@@ -252,6 +252,39 @@ export const adminApi = {
     api.post(`/api/admin/api-keys/${id}/enable`).then((r) => r.data),
 }
 
+// --- Predict API ---
+
+export interface AvailableModel {
+  req_no: string
+  name: string
+  classes: string[]
+  accuracy: number | null
+}
+
+export interface PredictResult {
+  req_no: string
+  model: string
+  prediction: string
+  confidence: number
+  all_scores: Record<string, number>
+  accuracy: number | null
+}
+
+export const predictApi = {
+  available: () =>
+    api.get<{ models: AvailableModel[] }>('/api/predict/available').then((r) => r.data.models),
+
+  predict: (req_no: string, file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return api
+      .post<PredictResult>(`/api/predict/${req_no}`, form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      .then((r) => r.data)
+  },
+}
+
 // --- Version ---
 
 export interface VersionInfo {

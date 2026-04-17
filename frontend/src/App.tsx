@@ -10,6 +10,10 @@ import SubmissionDetailPage from './pages/SubmissionDetailPage'
 import ReviewPage from './pages/ReviewPage'
 import RegistryPage from './pages/RegistryPage'
 import AcceptancePage from './pages/AcceptancePage'
+import AcceptanceQueuePage from './pages/AcceptanceQueuePage'
+import StatsPage from './pages/StatsPage'
+import ApiKeyPage from './pages/ApiKeyPage'
+import PredictPage from './pages/PredictPage'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -42,6 +46,10 @@ export default function App() {
                     <Route path="/review" element={<ReviewPage />} />
                     <Route path="/registry" element={<RegistryPage />} />
                     <Route path="/registry/:id/accept" element={<AcceptancePage />} />
+                    <Route path="/acceptance" element={<AcceptanceQueuePage />} />
+                    <Route path="/stats" element={<StatsPage />} />
+                    <Route path="/admin/api-keys" element={<ApiKeyPage />} />
+                    <Route path="/predict" element={<PredictPage />} />
                   </Routes>
                 </Layout>
               </ProtectedRoute>
