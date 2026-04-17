@@ -76,7 +76,56 @@ export interface Submission {
   reviewer_note: string | null
   reviewed_by: string | null
   reviewed_at: string | null
+  // Sprint 2
+  rejection_reasons: string | null
+  rejection_note: string | null
+  resubmit_count: number | null
+  resubmitted_at: string | null
+  // Sprint 3
+  kaggle_kernel_slug: string | null
+  kaggle_kernel_version: number | null
+  kaggle_status: string | null
+  kaggle_status_updated_at: string | null
+  kaggle_log_url: string | null
+  training_started_at: string | null
+  training_completed_at: string | null
+  // Sprint 4
+  gpu_seconds: number | null
+  estimated_cost_usd: number | null
+  total_attempts: number | null
+  // Sprint 6
+  max_retries: number | null
+  retry_count: number | null
+  max_budget_usd: number | null
+  budget_exceeded_notified: boolean | null
+  // Dataset unblock
+  dataset_status: string | null
+  blocked_reason: string | null
   created_at: string
+}
+
+export interface SubmissionHistoryItem {
+  id: number
+  req_no: string
+  action: string
+  actor: string | null
+  reasons: string[] | null
+  note: string | null
+  meta: Record<string, unknown> | null
+  created_at: string
+}
+
+export interface KaggleStatus {
+  req_no: string
+  kaggle_kernel_slug: string | null
+  kaggle_kernel_version: number | null
+  kaggle_status: string | null
+  kaggle_status_updated_at: string | null
+  kaggle_log_url: string | null
+  training_started_at: string | null
+  training_completed_at: string | null
+  gpu_seconds: number | null
+  estimated_cost_usd: number | null
 }
 
 export interface ModelVersion {
@@ -113,14 +162,19 @@ export interface StatsSummary {
 // --- Submission API ---
 
 export const submissionsApi = {
-  list: (params?: { status?: string; product?: string }) =>
+  list: (params?: { status?: string; product?: string; dataset_status?: string }) =>
     api.get<Submission[]>('/api/submissions/', { params }).then((r) => r.data),
 
   get: (req_no: string) =>
     api.get<Submission>(`/api/submissions/${req_no}`).then((r) => r.data),
 
   create: (data: Partial<Submission>) =>
-    api.post<Submission>('/api/submissions/', data).then((r) => r.data),
+    api
+      .post<{ submission: Submission; warnings: string[]; suggestions: string[] }>(
+        '/api/submissions/',
+        data,
+      )
+      .then((r) => r.data),
 
   update: (req_no: string, data: Partial<Submission>) =>
     api.patch<Submission>(`/api/submissions/${req_no}`, data).then((r) => r.data),
@@ -136,6 +190,78 @@ export const submissionsApi = {
     api
       .post(`/api/submissions/${req_no}/actions/${action}`, payload ?? {})
       .then((r) => r.data),
+
+  reject: (
+    req_no: string,
+    payload: { reasons: string[]; note?: string; actor?: string },
+  ) =>
+    api.post(`/api/submissions/${req_no}/reject`, payload).then((r) => r.data),
+
+  resubmit: (req_no: string, payload: { note?: string; actor?: string }) =>
+    api.post(`/api/submissions/${req_no}/resubmit`, payload).then((r) => r.data),
+
+  history: (req_no: string) =>
+    api
+      .get<SubmissionHistoryItem[]>(`/api/submissions/${req_no}/history`)
+      .then((r) => r.data),
+
+  attachKernel: (
+    req_no: string,
+    payload: { slug: string; version?: number; actor?: string },
+  ) =>
+    api
+      .post(`/api/submissions/${req_no}/attach-kernel`, payload)
+      .then((r) => r.data),
+
+  kaggleStatus: (req_no: string) =>
+    api
+      .get<KaggleStatus>(`/api/submissions/${req_no}/kaggle-status`)
+      .then((r) => r.data),
+
+  refreshKaggle: (req_no: string) =>
+    api.post(`/api/submissions/${req_no}/refresh-kaggle`).then((r) => r.data),
+}
+
+// --- Admin API (Sprint 7.1) ---
+
+export interface ApiKeyListItem {
+  id: number
+  key_preview: string
+  name: string
+  created_by: string | null
+  created_at: string
+  last_used_at: string | null
+  disabled: boolean
+}
+
+export interface ApiKeyFull extends ApiKeyListItem {
+  key: string
+}
+
+export const adminApi = {
+  listApiKeys: () =>
+    api.get<ApiKeyListItem[]>('/api/admin/api-keys/').then((r) => r.data),
+
+  createApiKey: (name: string) =>
+    api.post<ApiKeyFull>('/api/admin/api-keys/', { name }).then((r) => r.data),
+
+  disableApiKey: (id: number) =>
+    api.post(`/api/admin/api-keys/${id}/disable`).then((r) => r.data),
+
+  enableApiKey: (id: number) =>
+    api.post(`/api/admin/api-keys/${id}/enable`).then((r) => r.data),
+}
+
+// --- Version ---
+
+export interface VersionInfo {
+  version: string
+  build: string
+  commit: string
+}
+
+export const versionApi = {
+  get: () => api.get<VersionInfo>('/version').then((r) => r.data),
 }
 
 // --- Registry API ---

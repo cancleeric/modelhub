@@ -21,10 +21,25 @@ function getStartOfWeek(): Date {
   return mon
 }
 
+const DATASET_STATUS_LABEL: Record<string, string> = {
+  ready: '資料集就緒',
+  missing_labels: '缺標籤',
+  missing_data: '資料不足',
+  partial: '部分完成',
+}
+
+const DATASET_STATUS_COLOR: Record<string, string> = {
+  ready: 'bg-green-100 text-green-700',
+  missing_labels: 'bg-orange-100 text-orange-700',
+  missing_data: 'bg-red-100 text-red-700',
+  partial: 'bg-yellow-100 text-yellow-700',
+}
+
 export default function SubmissionListPage() {
   const [statusFilter, setStatusFilter] = useState('')
   const [priorityFilter, setPriorityFilter] = useState('')
   const [productFilter, setProductFilter] = useState('')
+  const [datasetFilter, setDatasetFilter] = useState('')
 
   // Load all submissions (no status filter at API level so we can count stats)
   const { data: allData } = useQuery({
@@ -34,15 +49,16 @@ export default function SubmissionListPage() {
 
   // Load filtered submissions for table
   const { data, isLoading, error } = useQuery({
-    queryKey: ['submissions', statusFilter, productFilter],
+    queryKey: ['submissions', statusFilter, productFilter, datasetFilter],
     queryFn: () =>
       submissionsApi.list({
         status: statusFilter || undefined,
         product: productFilter || undefined,
+        dataset_status: datasetFilter || undefined,
       }),
   })
 
-  // Compute 3 stats from allData
+  // Compute 4 stats from allData
   const statsCards = useMemo(() => {
     if (!allData) return null
     const weekStart = getStartOfWeek()
@@ -51,7 +67,10 @@ export default function SubmissionListPage() {
     const approvedThisWeek = allData.filter(
       (s) => s.status === 'approved' && new Date(s.created_at) >= weekStart,
     ).length
-    return { pending, training, approvedThisWeek }
+    const totalGpuSec = allData.reduce((acc, s) => acc + (s.gpu_seconds || 0), 0)
+    const totalGpuHours = Math.floor(totalGpuSec / 3600)
+    const totalCost = allData.reduce((acc, s) => acc + (s.estimated_cost_usd || 0), 0)
+    return { pending, training, approvedThisWeek, totalGpuHours, totalCost }
   }, [allData])
 
   // Priority filter applied on frontend
@@ -75,7 +94,7 @@ export default function SubmissionListPage() {
 
       {/* Summary Cards */}
       {statsCards && (
-        <div className="grid grid-cols-3 gap-4 mb-6">
+        <div className="grid grid-cols-4 gap-4 mb-6">
           <div className="bg-white rounded shadow-sm p-4 flex items-center gap-3">
             <div className="w-10 h-10 rounded-full bg-yellow-100 flex items-center justify-center text-yellow-600 font-bold text-lg">
               {statsCards.pending}
@@ -101,6 +120,15 @@ export default function SubmissionListPage() {
             <div>
               <div className="text-sm text-gray-500">本週核准</div>
               <div className="text-xs text-gray-400">approved，本週建立</div>
+            </div>
+          </div>
+          <div className="bg-white rounded shadow-sm p-4 flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center text-purple-600 font-bold text-base">
+              {statsCards.totalGpuHours}h
+            </div>
+            <div>
+              <div className="text-sm text-gray-500">累計 GPU</div>
+              <div className="text-xs text-gray-400">估算 ${statsCards.totalCost.toFixed(2)}</div>
             </div>
           </div>
         </div>
@@ -135,6 +163,17 @@ export default function SubmissionListPage() {
           value={productFilter}
           onChange={(e) => setProductFilter(e.target.value)}
         />
+        <select
+          className="border rounded px-3 py-1.5 text-sm bg-white"
+          value={datasetFilter}
+          onChange={(e) => setDatasetFilter(e.target.value)}
+        >
+          <option value="">全部資料集狀態</option>
+          <option value="ready">可訓練（ready）</option>
+          <option value="missing_labels">缺標籤</option>
+          <option value="missing_data">資料不足</option>
+          <option value="partial">部分完成</option>
+        </select>
       </div>
 
       {/* Table */}
@@ -150,6 +189,7 @@ export default function SubmissionListPage() {
                 <th className="text-left px-4 py-3 text-gray-600 font-medium">產品</th>
                 <th className="text-left px-4 py-3 text-gray-600 font-medium">提交人</th>
                 <th className="text-left px-4 py-3 text-gray-600 font-medium">狀態</th>
+                <th className="text-left px-4 py-3 text-gray-600 font-medium">資料集</th>
                 <th className="text-left px-4 py-3 text-gray-600 font-medium">優先</th>
                 <th className="text-left px-4 py-3 text-gray-600 font-medium">建立時間</th>
               </tr>
@@ -172,6 +212,19 @@ export default function SubmissionListPage() {
                     <StatusBadge status={s.status} />
                   </td>
                   <td className="px-4 py-3">
+                    {s.dataset_status ? (
+                      <span
+                        className={`text-xs font-medium px-2 py-0.5 rounded ${
+                          DATASET_STATUS_COLOR[s.dataset_status] ?? 'bg-gray-100 text-gray-600'
+                        }`}
+                      >
+                        {DATASET_STATUS_LABEL[s.dataset_status] ?? s.dataset_status}
+                      </span>
+                    ) : (
+                      <span className="text-gray-300 text-xs">-</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
                     <span className="text-xs font-mono text-gray-500">{s.priority}</span>
                   </td>
                   <td className="px-4 py-3 text-gray-400 text-xs">
@@ -181,7 +234,7 @@ export default function SubmissionListPage() {
               ))}
               {filteredData.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="text-center py-8 text-gray-400">
+                  <td colSpan={8} className="text-center py-8 text-gray-400">
                     無資料
                   </td>
                 </tr>
