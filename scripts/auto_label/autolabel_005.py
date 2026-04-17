@@ -36,9 +36,12 @@ CLASSES = [
 IMG_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"}
 
 # sliding window 參數
-WINDOW_SIZES = [64, 96, 128]   # 多尺度 patch
-STRIDE_RATIO = 0.5              # stride = window_size * ratio
-RESIZE_TO = 96                  # classifier input size
+# 對大圖先縮至 MAX_DIM，再做 sliding window 加速
+MAX_DIM = 640
+WINDOW_SIZES = [64, 96]        # 縮圖後的 patch 尺寸（減少尺度降低計算量）
+STRIDE_RATIO = 0.75            # stride = window_size * ratio（增大 stride 加速）
+RESIZE_TO = 96                 # classifier input size
+BATCH_SIZE = 32                # 批次推論
 
 
 def load_model(model_path: Path, device: str) -> torch.nn.Module:
@@ -104,34 +107,60 @@ def sliding_window_label(
 ) -> list:
     """
     Return list of (class_id, cx_norm, cy_norm, w_norm, h_norm, conf) tuples.
+    使用批次推論 + 圖片縮放加速。
     """
     img = cv2.imread(str(img_path))
     if img is None:
         return []
+    orig_h, orig_w = img.shape[:2]
+
+    # 縮圖到 MAX_DIM（加速 sliding window）
+    scale = 1.0
+    if max(orig_h, orig_w) > MAX_DIM:
+        scale = MAX_DIM / max(orig_h, orig_w)
+        img = cv2.resize(img, (int(orig_w * scale), int(orig_h * scale)))
     h, w = img.shape[:2]
+
+    all_patches = []   # tensor list
+    all_coords = []    # [x1, y1, x2, y2] in scaled coords
+
+    for win_size in WINDOW_SIZES:
+        stride = max(1, int(win_size * STRIDE_RATIO))
+        for y in range(0, h - win_size + 1, stride):
+            for x in range(0, w - win_size + 1, stride):
+                patch = img[y:y + win_size, x:x + win_size]
+                all_patches.append(preprocess_patch(patch, RESIZE_TO))
+                all_coords.append([x, y, x + win_size, y + win_size])
+
+    if not all_patches:
+        return []
+
+    # 批次推論
     raw_boxes = []
     with torch.no_grad():
-        for win_size in WINDOW_SIZES:
-            stride = max(1, int(win_size * STRIDE_RATIO))
-            for y in range(0, h - win_size + 1, stride):
-                for x in range(0, w - win_size + 1, stride):
-                    patch = img[y:y + win_size, x:x + win_size]
-                    tensor = preprocess_patch(patch, RESIZE_TO).to(device)
-                    logits = model(tensor)
-                    probs = F.softmax(logits, dim=1)[0]
-                    conf, cls_id = probs.max(0)
-                    conf = conf.item()
-                    cls_id = cls_id.item()
-                    if conf >= threshold:
-                        raw_boxes.append([x, y, x + win_size, y + win_size, conf, cls_id])
+        for i in range(0, len(all_patches), BATCH_SIZE):
+            batch = torch.cat(all_patches[i:i + BATCH_SIZE], dim=0).to(device)
+            logits = model(batch)
+            probs = F.softmax(logits, dim=1)
+            confs, cls_ids = probs.max(1)
+            for j, (conf, cls_id) in enumerate(zip(confs.cpu().tolist(), cls_ids.cpu().tolist())):
+                if conf >= threshold:
+                    x1, y1, x2, y2 = all_coords[i + j]
+                    raw_boxes.append([x1, y1, x2, y2, conf, cls_id])
 
     kept = nms_boxes(raw_boxes, iou_threshold=0.3)
+
+    # 反縮回原始座標
     yolo_lines = []
     for bx1, by1, bx2, by2, conf, cls_id in kept:
-        cx = (bx1 + bx2) / 2 / w
-        cy = (by1 + by2) / 2 / h
-        bw = (bx2 - bx1) / w
-        bh = (by2 - by1) / h
+        # 轉回原始圖尺寸
+        if scale != 1.0:
+            bx1, by1 = bx1 / scale, by1 / scale
+            bx2, by2 = bx2 / scale, by2 / scale
+        cx = (bx1 + bx2) / 2 / orig_w
+        cy = (by1 + by2) / 2 / orig_h
+        bw = (bx2 - bx1) / orig_w
+        bh = (by2 - by1) / orig_h
         yolo_lines.append((int(cls_id), cx, cy, bw, bh, conf))
     return yolo_lines
 
