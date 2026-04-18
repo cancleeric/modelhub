@@ -13,8 +13,8 @@ import os, sys, time, subprocess
 # torch 2.10+cu128 只含 sm_80+，T4 會報 cudaErrorNoKernelImageForDevice
 subprocess.check_call([
     sys.executable, "-m", "pip", "install", "-q",
-    "torch==2.2.2+cu118", "torchvision==0.17.2+cu118",
-    "--index-url", "https://download.pytorch.org/whl/cu118",
+    "torch==2.5.1+cu121", "torchvision==0.20.1+cu121",
+    "--index-url", "https://download.pytorch.org/whl/cu121",
     "--no-deps",
 ])
 subprocess.check_call([

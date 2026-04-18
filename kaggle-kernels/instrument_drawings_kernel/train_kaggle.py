@@ -14,13 +14,13 @@ import subprocess
 import time
 from pathlib import Path
 
-# Kaggle 預裝 torch 2.10+cu128 只含 sm_80+ kernel，T4(sm_75)/P100(sm_60) 會報
-# cudaErrorNoKernelImageForDevice。改裝 cu118 版（支援 sm_60+），
-# 用 --no-deps 避免重裝 numpy 造成 DLL 衝突。
+# torch cu128 只含 sm_80+，T4(sm_75) 報 cudaErrorNoKernelImageForDevice
+# torch 2.2.x + Python3.12 numpy2.x 報 Numpy is not available
+# 解法：cu121 含 sm_75 kernel，torch>=2.4 支援 numpy 2.x
 subprocess.check_call([
     sys.executable, "-m", "pip", "install", "-q",
-    "torch==2.2.2+cu118", "torchvision==0.17.2+cu118",
-    "--index-url", "https://download.pytorch.org/whl/cu118",
+    "torch==2.5.1+cu121", "torchvision==0.20.1+cu121",
+    "--index-url", "https://download.pytorch.org/whl/cu121",
     "--no-deps",
 ])
 subprocess.check_call([
