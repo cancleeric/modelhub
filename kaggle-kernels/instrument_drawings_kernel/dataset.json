@@ -1,0 +1,16 @@
+{
+  "req_no": "MH-2026-005",
+  "description": "MH-2026-005 Instrument Drawings dataset for Kaggle kernel",
+  "kaggle_dataset_slug": "boardgamegroup/aicad-instrument-drawings",
+  "upload_status": "ready",
+  "notes": "Dataset uploaded 2026-04-18 via --dir-mode zip. Source data at: ~/HurricaneCore/docker-data/modelhub/datasets/instrument_drawings/",
+  "dataset_contents": {
+    "raw": "270 instrument drawing images (.jpg/.png)",
+    "labels_auto": "YOLO format labels (.txt) per image, 272 files"
+  },
+  "classes": [
+    "ball_valve", "check_valve", "cock_valve", "flow_meter",
+    "gate_valve", "globe_valve", "misc_instrument", "panel",
+    "regulator", "safety_valve", "solenoid_valve"
+  ]
+}

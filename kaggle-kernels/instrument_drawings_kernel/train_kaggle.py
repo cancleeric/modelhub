@@ -14,8 +14,15 @@ import subprocess
 import time
 from pathlib import Path
 
-# 使用 Kaggle 預裝 torch（2.10+cu128，T4/P100 均支援），僅安裝 ultralytics
-# 不降 NumPy：Kaggle Python 3.12 環境 NumPy 2.x + torch 2.10 相容
+# Kaggle 預裝 torch 2.10+cu128 只含 sm_80+ kernel，T4(sm_75)/P100(sm_60) 會報
+# cudaErrorNoKernelImageForDevice。改裝 cu118 版（支援 sm_60+），
+# 用 --no-deps 避免重裝 numpy 造成 DLL 衝突。
+subprocess.check_call([
+    sys.executable, "-m", "pip", "install", "-q",
+    "torch==2.2.2+cu118", "torchvision==0.17.2+cu118",
+    "--index-url", "https://download.pytorch.org/whl/cu118",
+    "--no-deps",
+])
 subprocess.check_call([
     sys.executable, "-m", "pip", "install", "-q", "ultralytics",
 ])
@@ -117,33 +124,46 @@ print(f"[YAML] {yaml_path}", flush=True)
 
 from ultralytics import YOLO
 
-print(f"[MODEL] loading yolov8m.pt (pretrained COCO)", flush=True)
-model = YOLO("yolov8m.pt")
+print(f"[MODEL] loading yolov8s.pt (pretrained COCO, smaller for stability)", flush=True)
+model = YOLO("yolov8s.pt")
+
+import traceback
+import torch
+print(f"[GPU] CUDA available: {torch.cuda.is_available()}", flush=True)
+if torch.cuda.is_available():
+    print(f"[GPU] {torch.cuda.get_device_name(0)}, mem={torch.cuda.get_device_properties(0).total_memory//1024**3}GB", flush=True)
 
 t_start = time.time()
 print(f"\n=== Training Start (epochs={EPOCHS}, imgsz={IMGSZ}, device={DEVICE}) ===", flush=True)
-results = model.train(
-    data=str(yaml_path),
-    epochs=EPOCHS,
-    imgsz=IMGSZ,
-    batch=16,
-    device=DEVICE,
-    project=str(OUT_DIR),
-    name="yolo_run",
-    exist_ok=True,
-    patience=20,
-    save=True,
-    plots=True,
-    verbose=True,
-    # data augmentation
-    mosaic=1.0,
-    hsv_h=0.015,
-    hsv_s=0.7,
-    hsv_v=0.4,
-    degrees=5.0,
-    scale=0.5,
-    flipud=0.1,
-)
+try:
+    results = model.train(
+        data=str(yaml_path),
+        epochs=EPOCHS,
+        imgsz=IMGSZ,
+        batch=16,
+        amp=True,
+        device=DEVICE,
+        project=str(OUT_DIR),
+        name="yolo_run",
+        exist_ok=True,
+        patience=20,
+        save=True,
+        plots=True,
+        verbose=True,
+        mosaic=1.0,
+        hsv_h=0.015,
+        hsv_s=0.7,
+        hsv_v=0.4,
+        degrees=5.0,
+        scale=0.5,
+        flipud=0.1,
+    )
+except Exception as _train_err:
+    err_txt = traceback.format_exc()
+    print(f"[TRAIN ERROR] {_train_err}", flush=True)
+    print(err_txt, flush=True)
+    (WORK_DIR / "error.log").write_text(err_txt)
+    raise
 train_seconds = int(time.time() - t_start)
 print(f"\n[DONE] train elapsed {train_seconds}s = {train_seconds/3600:.2f}h", flush=True)
 

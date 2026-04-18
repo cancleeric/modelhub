@@ -10,11 +10,17 @@ import os, sys, time, subprocess
 # ---------------------------------------------------------------------------
 # 1. 安裝
 # ---------------------------------------------------------------------------
+# torch 2.10+cu128 只含 sm_80+，T4 會報 cudaErrorNoKernelImageForDevice
+subprocess.check_call([
+    sys.executable, "-m", "pip", "install", "-q",
+    "torch==2.2.2+cu118", "torchvision==0.17.2+cu118",
+    "--index-url", "https://download.pytorch.org/whl/cu118",
+    "--no-deps",
+])
 subprocess.check_call([
     sys.executable, "-m", "pip", "install", "-q",
     "transformers>=4.35", "sentencepiece", "Pillow",
 ])
-# 不降 NumPy：Kaggle Python 3.12 + torch 2.10+cu128 與 NumPy 2.x 相容
 
 import numpy as np
 import torch

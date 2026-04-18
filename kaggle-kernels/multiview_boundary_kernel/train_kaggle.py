@@ -14,11 +14,15 @@ import subprocess
 import time
 from pathlib import Path
 
-# 使用 Kaggle 預裝 torch（2.10+cu128，T4/P100 均支援），僅安裝 ultralytics
-# 不降 NumPy：Kaggle Python 3.12 環境 NumPy 2.x + torch 2.10 相容
+# torch 2.10+cu128 只含 sm_80+ kernel，T4(sm_75) 會報 cudaErrorNoKernelImageForDevice
+# 改裝 cu118（支援 sm_60+），--no-deps 避免動到 numpy
 subprocess.check_call([
-    sys.executable, "-m", "pip", "install", "-q", "ultralytics",
+    sys.executable, "-m", "pip", "install", "-q",
+    "torch==2.2.2+cu118", "torchvision==0.17.2+cu118",
+    "--index-url", "https://download.pytorch.org/whl/cu118",
+    "--no-deps",
 ])
+subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "ultralytics"])
 
 import torch
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
