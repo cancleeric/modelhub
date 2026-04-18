@@ -17,7 +17,7 @@ from pathlib import Path
 # 改裝 cu118（支援 sm_60+），--no-deps 避免動到 numpy
 subprocess.check_call([
     sys.executable, "-m", "pip", "install", "-q",
-    "t",
+    "torch==2.5.1+cu121", "torchvision==0.20.1+cu121",
     "--index-url", "https://download.pytorch.org/whl/cu121",
     "--no-deps",
 ])
