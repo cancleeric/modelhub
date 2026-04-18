@@ -5,6 +5,9 @@ import { submissionsApi, registryApi, type Submission } from '../api/client'
 import StatusBadge from '../components/StatusBadge'
 import RejectModal from '../components/RejectModal'
 
+const LIGHTNING_STUDIO_URL = (studioName: string) =>
+  `https://lightning.ai/cancleeric/studios/${studioName}`
+
 const AVAILABLE_ACTIONS: Record<string, { action: string; label: string; color: string }[]> = {
   draft:    [{ action: 'submit', label: '提交審核', color: 'blue' }],
   submitted:[
@@ -171,6 +174,13 @@ export default function SubmissionDetailPage() {
     },
   })
 
+  const refreshLightningMut = useMutation({
+    mutationFn: () => submissionsApi.refreshLightning(req_no!),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['submission', req_no] })
+    },
+  })
+
   if (isLoading) return <p className="text-gray-500">載入中...</p>
   if (!sub) return <p className="text-red-500">找不到需求單 {req_no}</p>
 
@@ -212,7 +222,7 @@ export default function SubmissionDetailPage() {
                 : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
           >
-            {t === 'info' ? '需求資訊' : t === 'kaggle' ? 'Kaggle 訓練' : '審核軌跡'}
+            {t === 'info' ? '需求資訊' : t === 'kaggle' ? '訓練狀態' : '審核軌跡'}
           </button>
         ))}
       </div>
@@ -458,116 +468,195 @@ export default function SubmissionDetailPage() {
 
       {tab === 'kaggle' && (
         <div className="bg-white rounded shadow p-5 space-y-4">
-          <h3 className="text-sm font-semibold text-gray-700">Kaggle Kernel 訓練</h3>
-
-          {sub.kaggle_kernel_slug ? (
-            <>
-            <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
-              <Item label="Kernel" value={sub.kaggle_kernel_slug} mono />
-              <Item label="版本" value={sub.kaggle_kernel_version?.toString()} mono />
-              <Item label="狀態" value={sub.kaggle_status} />
-              <Item
-                label="最後更新"
-                value={
-                  sub.kaggle_status_updated_at
-                    ? new Date(sub.kaggle_status_updated_at).toLocaleString('zh-TW')
-                    : undefined
-                }
-              />
-              <Item
-                label="開始訓練"
-                value={
-                  sub.training_started_at
-                    ? new Date(sub.training_started_at).toLocaleString('zh-TW')
-                    : undefined
-                }
-              />
-              <Item
-                label="訓練完成"
-                value={
-                  sub.training_completed_at
-                    ? new Date(sub.training_completed_at).toLocaleString('zh-TW')
-                    : undefined
-                }
-              />
-              <Item
-                label="GPU 時數"
-                value={
-                  sub.gpu_seconds
-                    ? `${Math.floor(sub.gpu_seconds / 3600)}h ${Math.floor((sub.gpu_seconds % 3600) / 60)}m`
-                    : undefined
-                }
-              />
-              <Item
-                label="估算成本"
-                value={sub.estimated_cost_usd != null ? `$${sub.estimated_cost_usd.toFixed(4)}` : undefined}
-              />
-              <Item
-                label="預算上限"
-                value={sub.max_budget_usd != null ? `$${sub.max_budget_usd.toFixed(2)}` : undefined}
-              />
-              <Item
-                label="重試次數"
-                value={`${sub.retry_count ?? 0} / ${sub.max_retries ?? 2}`}
-              />
-            </dl>
-            {sub.max_budget_usd && sub.estimated_cost_usd != null && (
-              <BudgetBar current={sub.estimated_cost_usd} budget={sub.max_budget_usd} exceeded={!!sub.budget_exceeded_notified} />
+          <div className="flex items-center gap-3">
+            <h3 className="text-sm font-semibold text-gray-700">訓練狀態</h3>
+            {sub.training_resource && (
+              <span className="text-xs bg-indigo-100 text-indigo-700 font-medium px-2 py-0.5 rounded">
+                {sub.training_resource}
+              </span>
             )}
+          </div>
+
+          {/* Lightning AI 訓練資訊 */}
+          {sub.training_resource === 'lightning' ? (
+            <>
+              {sub.lightning_studio_name || sub.kaggle_status ? (
+                <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                  <Item label="Studio 名稱" value={sub.lightning_studio_name} mono />
+                  <Item label="狀態" value={sub.kaggle_status} />
+                  <Item
+                    label="最後更新"
+                    value={
+                      sub.kaggle_status_updated_at
+                        ? new Date(sub.kaggle_status_updated_at).toLocaleString('zh-TW')
+                        : undefined
+                    }
+                  />
+                  <Item
+                    label="開始訓練"
+                    value={
+                      sub.training_started_at
+                        ? new Date(sub.training_started_at).toLocaleString('zh-TW')
+                        : undefined
+                    }
+                  />
+                  <Item
+                    label="訓練完成"
+                    value={
+                      sub.training_completed_at
+                        ? new Date(sub.training_completed_at).toLocaleString('zh-TW')
+                        : undefined
+                    }
+                  />
+                  <Item
+                    label="GPU 時數"
+                    value={
+                      sub.gpu_seconds
+                        ? `${Math.floor(sub.gpu_seconds / 3600)}h ${Math.floor((sub.gpu_seconds % 3600) / 60)}m`
+                        : undefined
+                    }
+                  />
+                  <Item
+                    label="估算成本"
+                    value={sub.estimated_cost_usd != null ? `$${sub.estimated_cost_usd.toFixed(4)}（免費配額）` : undefined}
+                  />
+                </dl>
+              ) : (
+                <p className="text-sm text-gray-500">Lightning Studio 尚未建立或無狀態資訊。</p>
+              )}
+              <div className="border-t pt-4 flex gap-2">
+                <button
+                  disabled={refreshLightningMut.isPending}
+                  onClick={() => refreshLightningMut.mutate()}
+                  className="px-4 py-2 text-sm bg-gray-600 text-white rounded hover:bg-gray-700 disabled:opacity-50"
+                >
+                  {refreshLightningMut.isPending ? '刷新中...' : '手動刷新 Lightning 狀態'}
+                </button>
+                {sub.lightning_studio_name && (
+                  <a
+                    href={LIGHTNING_STUDIO_URL(sub.lightning_studio_name)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-4 py-2 text-sm border rounded text-indigo-600 hover:bg-indigo-50"
+                  >
+                    開 Lightning AI Studio ↗
+                  </a>
+                )}
+              </div>
             </>
           ) : (
-            <p className="text-sm text-gray-500">尚未綁定 Kaggle kernel。</p>
-          )}
+            /* Kaggle Kernel 訓練資訊（預設）*/
+            <>
+              {sub.kaggle_kernel_slug ? (
+                <>
+                <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                  <Item label="Kernel" value={sub.kaggle_kernel_slug} mono />
+                  <Item label="版本" value={sub.kaggle_kernel_version?.toString()} mono />
+                  <Item label="狀態" value={sub.kaggle_status} />
+                  <Item
+                    label="最後更新"
+                    value={
+                      sub.kaggle_status_updated_at
+                        ? new Date(sub.kaggle_status_updated_at).toLocaleString('zh-TW')
+                        : undefined
+                    }
+                  />
+                  <Item
+                    label="開始訓練"
+                    value={
+                      sub.training_started_at
+                        ? new Date(sub.training_started_at).toLocaleString('zh-TW')
+                        : undefined
+                    }
+                  />
+                  <Item
+                    label="訓練完成"
+                    value={
+                      sub.training_completed_at
+                        ? new Date(sub.training_completed_at).toLocaleString('zh-TW')
+                        : undefined
+                    }
+                  />
+                  <Item
+                    label="GPU 時數"
+                    value={
+                      sub.gpu_seconds
+                        ? `${Math.floor(sub.gpu_seconds / 3600)}h ${Math.floor((sub.gpu_seconds % 3600) / 60)}m`
+                        : undefined
+                    }
+                  />
+                  <Item
+                    label="估算成本"
+                    value={sub.estimated_cost_usd != null ? `$${sub.estimated_cost_usd.toFixed(4)}` : undefined}
+                  />
+                  <Item
+                    label="預算上限"
+                    value={sub.max_budget_usd != null ? `$${sub.max_budget_usd.toFixed(2)}` : undefined}
+                  />
+                  <Item
+                    label="重試次數"
+                    value={`${sub.retry_count ?? 0} / ${sub.max_retries ?? 2}`}
+                  />
+                </dl>
+                {sub.max_budget_usd && sub.estimated_cost_usd != null && (
+                  <BudgetBar current={sub.estimated_cost_usd} budget={sub.max_budget_usd} exceeded={!!sub.budget_exceeded_notified} />
+                )}
+                </>
+              ) : (
+                <p className="text-sm text-gray-500">尚未綁定 Kaggle kernel。</p>
+              )}
 
-          {(sub.status === 'approved' || sub.status === 'training') && (
-            <div className="border-t pt-4 space-y-2">
-              <input
-                type="text"
-                placeholder="kernel slug，例：boardgamegroup/mh-2026-001"
-                className="w-full border rounded p-2 text-sm font-mono"
-                value={kernelSlug}
-                onChange={(e) => setKernelSlug(e.target.value)}
-              />
-              <input
-                type="number"
-                placeholder="版本號（可選）"
-                className="w-full border rounded p-2 text-sm"
-                value={kernelVersion}
-                onChange={(e) => setKernelVersion(e.target.value)}
-              />
-              <button
-                disabled={attachMut.isPending || !kernelSlug.trim()}
-                onClick={() =>
-                  attachMut.mutate({
-                    slug: kernelSlug.trim(),
-                    version: kernelVersion ? Number(kernelVersion) : undefined,
-                  })
-                }
-                className="px-4 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
-              >
-                {attachMut.isPending ? '綁定中...' : '綁定 Kernel 並開始訓練'}
-              </button>
-            </div>
-          )}
+              {(sub.status === 'approved' || sub.status === 'training') && (
+                <div className="border-t pt-4 space-y-2">
+                  <input
+                    type="text"
+                    placeholder="kernel slug，例：boardgamegroup/mh-2026-001"
+                    className="w-full border rounded p-2 text-sm font-mono"
+                    value={kernelSlug}
+                    onChange={(e) => setKernelSlug(e.target.value)}
+                  />
+                  <input
+                    type="number"
+                    placeholder="版本號（可選）"
+                    className="w-full border rounded p-2 text-sm"
+                    value={kernelVersion}
+                    onChange={(e) => setKernelVersion(e.target.value)}
+                  />
+                  <button
+                    disabled={attachMut.isPending || !kernelSlug.trim()}
+                    onClick={() =>
+                      attachMut.mutate({
+                        slug: kernelSlug.trim(),
+                        version: kernelVersion ? Number(kernelVersion) : undefined,
+                      })
+                    }
+                    className="px-4 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
+                  >
+                    {attachMut.isPending ? '綁定中...' : '綁定 Kernel 並開始訓練'}
+                  </button>
+                </div>
+              )}
 
-          {sub.kaggle_kernel_slug && (
-            <div className="border-t pt-4 flex gap-2">
-              <button
-                disabled={refreshKaggleMut.isPending}
-                onClick={() => refreshKaggleMut.mutate()}
-                className="px-4 py-2 text-sm bg-gray-600 text-white rounded hover:bg-gray-700 disabled:opacity-50"
-              >
-                {refreshKaggleMut.isPending ? '刷新中...' : '手動刷新 Kaggle 狀態'}
-              </button>
-              <a
-                href={`https://www.kaggle.com/code/${sub.kaggle_kernel_slug}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="px-4 py-2 text-sm border rounded text-indigo-600 hover:bg-indigo-50"
-              >
-                開 Kaggle 頁面 ↗
-              </a>
-            </div>
+              {sub.kaggle_kernel_slug && (
+                <div className="border-t pt-4 flex gap-2">
+                  <button
+                    disabled={refreshKaggleMut.isPending}
+                    onClick={() => refreshKaggleMut.mutate()}
+                    className="px-4 py-2 text-sm bg-gray-600 text-white rounded hover:bg-gray-700 disabled:opacity-50"
+                  >
+                    {refreshKaggleMut.isPending ? '刷新中...' : '手動刷新 Kaggle 狀態'}
+                  </button>
+                  <a
+                    href={`https://www.kaggle.com/code/${sub.kaggle_kernel_slug}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-4 py-2 text-sm border rounded text-indigo-600 hover:bg-indigo-50"
+                  >
+                    開 Kaggle 頁面 ↗
+                  </a>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}

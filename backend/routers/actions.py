@@ -23,6 +23,10 @@ _logger = logging.getLogger("modelhub.routers.actions")
 
 DISABLE_LOCAL_TRAINING = os.getenv("DISABLE_LOCAL_TRAINING", "false").lower() == "true"
 
+# Auto-approve 模式（預設關閉）：submit 後若 validator 通過，自動推進到 approved + 觸發訓練
+# 護欄：dataset_status 必須是 'ready'，且 blocked_reason 為空
+AUTO_APPROVE_AFTER_VALIDATOR = os.getenv("AUTO_APPROVE_AFTER_VALIDATOR", "false").lower() == "true"
+
 router = APIRouter()
 
 # 合法的狀態轉移 map：{action: (required_current_status, next_status)}
@@ -290,6 +294,10 @@ async def perform_action(
         db.commit()
         background_tasks.add_task(_handle_start_training_resource_bg, req_no, SessionLocal)
 
+    # Auto-approve 模式：submit 後若 validator pass 且 dataset 就緒，自動 approve
+    if action == "submit" and AUTO_APPROVE_AFTER_VALIDATOR:
+        background_tasks.add_task(_auto_approve_if_valid_bg, req_no, SessionLocal)
+
     await notify_event(action, obj, actor=actor, note=payload.note)
 
     return {
@@ -297,6 +305,93 @@ async def perform_action(
         "action": action,
         "status": obj.status,
     }
+
+
+# ---------------------------------------------------------------------------
+# Auto-approve 背景任務
+# ---------------------------------------------------------------------------
+
+def _auto_approve_if_valid_bg(req_no: str, db_session_factory) -> None:
+    """
+    submit 後在背景執行：
+    1. 重新跑 validator（同步版本）
+    2. 若 warnings 為空 且 dataset_status == 'ready' 且無 blocked_reason
+       → 自動 approve，寫 history，再觸發 start_training
+    3. 若有 warnings → 保持 submitted，寫 auto_approve_skipped history
+    護欄：只有 AUTO_APPROVE_AFTER_VALIDATOR=true 時才會被呼叫。
+    """
+    import asyncio as _asyncio
+    db: Session = db_session_factory()
+    try:
+        obj = db.query(Submission).filter(Submission.req_no == req_no).first()
+        if not obj:
+            _logger.error("auto_approve: submission %s not found", req_no)
+            return
+        if obj.status != "submitted":
+            _logger.info("auto_approve: submission %s status=%s, skip", req_no, obj.status)
+            return
+
+        # 護欄：dataset 必須就緒
+        if obj.dataset_status != "ready" or obj.blocked_reason:
+            _record_history(
+                db, req_no=req_no, action="auto_approve_skipped",
+                actor="system",
+                note=f"dataset_status={obj.dataset_status}, blocked_reason present, 需人工審查",
+            )
+            db.commit()
+            _logger.info("auto_approve: submission %s skipped (dataset not ready)", req_no)
+            return
+
+        # 跑 validator（非同步，用 asyncio）
+        from validators import validate_submission
+
+        try:
+            loop = _asyncio.new_event_loop()
+            warnings = loop.run_until_complete(validate_submission(obj))
+            loop.close()
+        except Exception as e:
+            _logger.warning("auto_approve: validator failed for %s: %s", req_no, e)
+            warnings = []  # validator 失敗時不阻止 approve
+
+        if warnings:
+            _record_history(
+                db, req_no=req_no, action="auto_approve_skipped",
+                actor="system",
+                note=f"validator 有 {len(warnings)} 個警告，需人工審查",
+                meta={"warnings": warnings[:5]},  # 最多記 5 個
+            )
+            db.commit()
+            _logger.info(
+                "auto_approve: submission %s skipped (validator warnings=%d)", req_no, len(warnings)
+            )
+            return
+
+        # 全部通過 → 自動 approve
+        now = __import__("datetime").datetime.utcnow()
+        obj.status = "approved"
+        obj.reviewed_by = "system"
+        obj.reviewed_at = now
+        obj.reviewer_note = "auto-approved by system (validator pass, dataset ready)"
+        obj.kaggle_status = "queued"
+        _record_history(
+            db, req_no=req_no, action="approve",
+            actor="system", note="auto-approved (validator pass)",
+        )
+        _record_history(
+            db, req_no=req_no, action="auto_start_training",
+            actor="system", note="auto-approve 後自動排入訓練",
+        )
+        db.commit()
+        db.refresh(obj)
+
+        # 觸發訓練
+        _handle_start_training_resource_bg(req_no, db_session_factory)
+        _logger.info("auto_approve: submission %s approved and training dispatched", req_no)
+
+    except Exception as e:
+        _logger.exception("auto_approve failed for req=%s: %s", req_no, e)
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------------

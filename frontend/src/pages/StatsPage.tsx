@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { api } from '../api/client'
 import {
   LineChart,
   Line,
@@ -50,6 +51,21 @@ function isoWeekLabel(d: Date): string {
   return `${m}/${day}`
 }
 
+interface ResourceQuota {
+  kaggle: {
+    weekly_limit_hours: number
+    used_hours_this_week: number
+    remaining_hours_this_week: number
+    total_gpu_hours_all_time: number
+  }
+  lightning: {
+    monthly_limit_hours: number
+    used_hours_this_month: number
+    remaining_hours_this_month: number
+    is_free_tier: boolean
+  }
+}
+
 export default function StatsPage() {
   const { data: subs } = useQuery({
     queryKey: ['submissions-all'],
@@ -58,6 +74,11 @@ export default function StatsPage() {
   const { data: versions } = useQuery({
     queryKey: ['registry', 'all'],
     queryFn: () => registryApi.list(),
+  })
+  const { data: quota } = useQuery<ResourceQuota>({
+    queryKey: ['resource-quota'],
+    queryFn: () => api.get<ResourceQuota>('/api/health/resource-quota').then((r) => r.data),
+    refetchInterval: 5 * 60 * 1000, // 每 5 分鐘更新
   })
 
   const stats = useMemo(() => {
@@ -90,13 +111,15 @@ export default function StatsPage() {
       : null
 
     // 訓練資源分布
-    const resourceDist: Record<string, number> = { kaggle: 0, local_mps: 0, unknown: 0 }
+    const resourceDist: Record<string, number> = { kaggle: 0, lightning: 0, local_mps: 0, unknown: 0 }
     s.forEach((x) => {
       const r = x.training_resource
       if (!r) {
         resourceDist.unknown += 1
       } else if (r === 'kaggle') {
         resourceDist.kaggle += 1
+      } else if (r === 'lightning') {
+        resourceDist.lightning += 1
       } else if (r === 'local_mps') {
         resourceDist.local_mps += 1
       } else {
@@ -247,6 +270,28 @@ export default function StatsPage() {
         <BarCard title="按狀態分布" data={stats.byStatus} />
         <BarCard title="訓練資源分布" data={stats.resourceDist} />
       </div>
+
+      {/* 資源配額卡片 */}
+      {quota && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+          <QuotaCard
+            title="Kaggle 免費配額（本週）"
+            used={quota.kaggle.used_hours_this_week}
+            limit={quota.kaggle.weekly_limit_hours}
+            remaining={quota.kaggle.remaining_hours_this_week}
+            unit="h/週"
+            warnThreshold={5}
+          />
+          <QuotaCard
+            title="Lightning AI 免費配額（本月）"
+            used={quota.lightning.used_hours_this_month}
+            limit={quota.lightning.monthly_limit_hours}
+            remaining={quota.lightning.remaining_hours_this_month}
+            unit="h/月"
+            warnThreshold={3}
+          />
+        </div>
+      )}
     </div>
   )
 }
@@ -269,6 +314,45 @@ function KpiCard({
       </div>
       <div className="text-2xl font-bold text-gray-900 mt-2">{value}</div>
       <div className="text-xs text-gray-500 mt-0.5">{sub}</div>
+    </div>
+  )
+}
+
+function QuotaCard({
+  title,
+  used,
+  limit,
+  remaining,
+  unit,
+  warnThreshold,
+}: {
+  title: string
+  used: number
+  limit: number
+  remaining: number
+  unit: string
+  warnThreshold: number
+}) {
+  const pct = Math.min(100, (used / limit) * 100)
+  const isWarn = remaining < warnThreshold
+  const barColor = isWarn ? 'bg-red-500' : pct >= 70 ? 'bg-yellow-500' : 'bg-green-500'
+  return (
+    <div className="bg-white rounded shadow p-5">
+      <h3 className="text-sm font-semibold text-gray-700 mb-3">{title}</h3>
+      <div className="flex justify-between text-sm text-gray-600 mb-2">
+        <span>已用 <strong>{used.toFixed(1)}</strong> {unit}</span>
+        <span className={isWarn ? 'text-red-600 font-semibold' : 'text-gray-600'}>
+          剩餘 <strong>{remaining.toFixed(1)}</strong> / {limit} h
+        </span>
+      </div>
+      <div className="h-3 bg-gray-100 rounded overflow-hidden">
+        <div className={`${barColor} h-full transition-all`} style={{ width: `${pct}%` }} />
+      </div>
+      {isWarn && (
+        <p className="text-xs text-red-600 mt-2 font-medium">
+          配額即將耗盡，請注意排程！
+        </p>
+      )}
     </div>
   )
 }

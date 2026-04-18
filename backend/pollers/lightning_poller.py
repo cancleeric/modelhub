@@ -64,8 +64,8 @@ def _get_lightning_studio(studio_name: str):
 def _fetch_job_status(studio_name: str) -> Optional[dict]:
     """
     查詢 Lightning Studio job 狀態（同步版本，供 APScheduler 呼叫）。
+    直接呼叫 LightningLauncher.get_job_status() 取得正規化狀態。
 
-    TODO: 待 API Key 後補完。
     預期回傳格式：
         {"status": "running"/"complete"/"error"/"queued", "raw": str}
     """
@@ -73,31 +73,57 @@ def _fetch_job_status(studio_name: str) -> Optional[dict]:
         logger.warning("LIGHTNING_API_KEY 未設，跳過 status fetch")
         return None
 
-    # TODO: 實作
-    # studio = _get_lightning_studio(studio_name)
-    # if not studio:
-    #     return None
-    # status = studio.status  # "running" / "stopped" / "error" 等
-    # return {"status": _normalize_status(status), "raw": str(status)}
-    logger.debug("[TODO] _fetch_job_status studio=%s（待 API Key 實作）", studio_name)
-    return None
+    try:
+        from resources.lightning_launcher import LightningLauncher
+        launcher = LightningLauncher()
+        raw_status = launcher.get_job_status(studio_name)
+        normalized = _normalize_status(raw_status)
+        logger.debug("_fetch_job_status studio=%s raw=%s normalized=%s", studio_name, raw_status, normalized)
+        return {"status": normalized, "raw": raw_status}
+    except Exception as exc:
+        logger.warning("_fetch_job_status studio=%s exception: %s", studio_name, exc)
+        return None
 
 
 def _download_job_output(studio_name: str, dest_dir: str) -> Optional[str]:
     """
-    下載 Lightning job output（result.json + best.pt 等）。
-
-    TODO: 待 API Key 後補完。
-    Lightning Studio 產出會在 /teamspace/studios/this_studio/kaggle/working/ 等路徑。
+    下載 Lightning job output（best.pt + training log）。
+    呼叫 LightningLauncher.download_model() 取得 best.pt，
+    並嘗試取 training log 用於 metrics 解析。
+    回傳 dest_dir 若成功，None 若失敗。
     """
     if not _lightning_env_ready():
         return None
 
-    # TODO: 實作
-    # studio = _get_lightning_studio(studio_name)
-    # studio.download("result.json", dest_dir)
-    logger.debug("[TODO] _download_job_output studio=%s（待 API Key 實作）", studio_name)
-    return None
+    try:
+        from pathlib import Path as _Path
+        from resources.lightning_launcher import LightningLauncher
+        launcher = LightningLauncher()
+        dest = _Path(dest_dir)
+        dest.mkdir(parents=True, exist_ok=True)
+
+        # 下載 best.pt
+        best_pt_path = str(dest / "best.pt")
+        pt_ok = launcher.download_model(studio_name, best_pt_path)
+        if pt_ok:
+            logger.info("_download_job_output: best.pt downloaded to %s", best_pt_path)
+
+        # 嘗試取 training log（供 metrics 解析）
+        log_text = launcher.get_job_logs(studio_name)
+        if log_text:
+            log_path = dest / "training.log"
+            log_path.write_text(log_text, encoding="utf-8")
+            logger.info("_download_job_output: training log written to %s (%d chars)", log_path, len(log_text))
+
+        # 只要 best.pt 或 log 其中一個有拿到，視為下載成功
+        if pt_ok or log_text:
+            return dest_dir
+
+        logger.warning("_download_job_output studio=%s: 未取得任何產出", studio_name)
+        return None
+    except Exception as exc:
+        logger.warning("_download_job_output studio=%s exception: %s", studio_name, exc)
+        return None
 
 
 def _normalize_status(raw_status: str) -> str:
@@ -162,18 +188,101 @@ def _process_submission(
         db.commit()
 
     if status == "complete":
-        # TODO: 下載 output → 解析 metrics → 建 ModelVersion
         dest_dir = str(Path(LIGHTNING_DOWNLOAD_DIR) / str(submission.req_no))
         output_dir = _download_job_output(studio_name, dest_dir)
+        metrics: dict = {}
+        parsed: dict = {}
         if output_dir:
-            result_json_candidates = list(Path(output_dir).rglob("result.json"))
-            if result_json_candidates:
-                raw_log = result_json_candidates[0].read_text()
-                metrics = parse_training_log(raw_log)
+            # 讀取所有 log 文字（.log / .txt / .json）
+            from pollers.kaggle_poller import _read_log_files
+            log_text = _read_log_files(output_dir)
+            if log_text:
+                parsed = parse_training_log(submission.arch or "yolov8m", log_text)
+                metrics = parsed.get("metrics", {}) or {}
                 logger.info("submission %s metrics=%s", submission.req_no, metrics)
-                # TODO: create ModelVersion（參考 kaggle_poller 實作）
+
+        now = datetime.utcnow()
+        submission.status = "trained"
+        submission.training_completed_at = now
+        submission.kaggle_status = "complete"
+        submission.kaggle_status_updated_at = now
+
+        # GPU 時數估算
+        if submission.training_started_at:
+            gpu_seconds = int((now - submission.training_started_at).total_seconds())
+            submission.gpu_seconds = gpu_seconds
+            if LIGHTNING_IS_FREE_TIER:
+                submission.estimated_cost_usd = 0.0
             else:
-                logger.warning("submission %s 無 result.json，無法解析 metrics", submission.req_no)
+                submission.estimated_cost_usd = round(gpu_seconds / 3600 * GPU_USD_PER_HOUR, 4)
+
+        # per-class metrics
+        per_class = parsed.get("per_class") if parsed else None
+        if per_class and isinstance(per_class, dict):
+            import json as _json_pc
+            try:
+                submission.per_class_metrics = _json_pc.dumps(per_class, ensure_ascii=False)
+            except Exception:
+                pass
+
+        # 建 ModelVersion
+        from models import ModelVersion as _ModelVersion
+        import re as _re
+
+        def _next_version(req_no: str, db: Session) -> str:
+            latest = (
+                db.query(_ModelVersion)
+                .filter(_ModelVersion.req_no == req_no)
+                .order_by(_ModelVersion.id.desc())
+                .first()
+            )
+            if not latest:
+                return "v1"
+            m2 = _re.match(r"v(\d+)", latest.version or "")
+            n = int(m2.group(1)) + 1 if m2 else 1
+            return f"v{n}"
+
+        next_ver = _next_version(submission.req_no, db)
+        mv = _ModelVersion(
+            req_no=submission.req_no,
+            product=submission.product,
+            model_name=submission.req_name or f"{submission.product} model",
+            version=next_ver,
+            train_date=now.strftime("%Y-%m-%d"),
+            map50=metrics.get("map50"),
+            map50_95=metrics.get("map50_95"),
+            map50_actual=metrics.get("map50"),
+            map50_95_actual=metrics.get("map50_95"),
+            epochs=metrics.get("epochs"),
+            batch_size=metrics.get("batch_size"),
+            arch=submission.arch,
+            status="pending_acceptance",
+            notes=f"auto-filled by lightning-poller at {now.isoformat()}",
+        )
+        db.add(mv)
+        _append_history(
+            db,
+            req_no=submission.req_no,
+            action="training_complete",
+            meta={
+                "metrics": metrics,
+                "gpu_seconds": submission.gpu_seconds,
+                "estimated_cost_usd": submission.estimated_cost_usd,
+                "version": next_ver,
+                "platform": "lightning",
+            },
+        )
+        db.commit()
+        db.refresh(submission)
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(notify_event("training_complete", submission))
+            else:
+                loop.run_until_complete(notify_event("training_complete", submission))
+        except Exception:
+            pass
 
     elif status == "error":
         submission.status = "failed"
@@ -222,20 +331,28 @@ def poll_once() -> dict:
 
     db: Session = SessionLocal()
     try:
-        # TODO: 實際查詢 platform=lightning 的 submission
-        # rows = (
-        #     db.query(Submission)
-        #     .filter(
-        #         Submission.platform == "lightning",
-        #         Submission.status.in_(["training", "queued", "running"]),
-        #     )
-        #     .all()
-        # )
-        # summary = {"checked": len(rows), "changed": 0}
-        # for sub in rows:
-        #     _process_submission(db, sub)
-        logger.debug("[TODO] Lightning poller tick（待 API Key 後補 query）")
-        return {"skipped": True, "reason": "not implemented"}
+        rows = (
+            db.query(Submission)
+            .filter(
+                Submission.training_resource == "lightning",
+                Submission.status.in_(["training", "queued"]),
+            )
+            .all()
+        )
+        summary = {"checked": len(rows), "changed": 0, "complete": 0, "error": 0}
+        for sub in rows:
+            prev_status = sub.kaggle_status
+            _process_submission(db, sub)
+            # 重新讀取確認狀態是否有變化
+            db.refresh(sub)
+            if sub.kaggle_status != prev_status:
+                summary["changed"] += 1
+            if sub.status == "trained":
+                summary["complete"] += 1
+            elif sub.status == "failed":
+                summary["error"] += 1
+        logger.debug("Lightning poller tick: %s", summary)
+        return summary
     except Exception as exc:
         logger.exception("Lightning poller poll_once 例外: %s", exc)
         return {"error": str(exc)}

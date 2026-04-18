@@ -106,6 +106,8 @@ export interface Submission {
   per_class_metrics?: string | null
   dataset_train_count?: number | null
   model_output_path?: string | null
+  // Sprint 17
+  lightning_studio_name?: string | null
   created_at: string
 }
 
@@ -225,6 +227,9 @@ export const submissionsApi = {
 
   refreshKaggle: (req_no: string) =>
     api.post(`/api/submissions/${req_no}/refresh-kaggle`).then((r) => r.data),
+
+  refreshLightning: (req_no: string) =>
+    api.post(`/api/submissions/${req_no}/refresh-lightning`).then((r) => r.data),
 }
 
 // --- Admin API (Sprint 7.1) ---

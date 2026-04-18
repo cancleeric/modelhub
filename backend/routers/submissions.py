@@ -152,6 +152,8 @@ class SubmissionOut(BaseModel):
     training_resource: Optional[str] = None
     # Sprint 13 P2-A
     per_class_metrics: Optional[str] = None
+    # Sprint 17 P1-4
+    lightning_studio_name: Optional[str] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

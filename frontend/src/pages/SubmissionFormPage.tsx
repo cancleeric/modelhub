@@ -623,6 +623,12 @@ export default function SubmissionFormPage() {
           </Field>
         </div>
 
+        {/* Auto-approve 提示（伺服器端 AUTO_APPROVE_AFTER_VALIDATOR=true 時生效）*/}
+        <div className="bg-blue-50 border border-blue-200 rounded p-3 text-sm text-blue-700">
+          <strong>自動訓練模式：</strong>若系統已開啟 Auto-approve，
+          送審後驗證通過且資料集就緒時將自動核准並開始訓練，無需人工 approve。
+        </div>
+
         <div className="flex justify-end gap-3 pt-2">
           <button
             type="button"

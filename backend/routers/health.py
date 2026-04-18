@@ -68,6 +68,73 @@ async def get_resources(
     }
 
 
+@router.get("/resource-quota")
+async def get_resource_quota(
+    db: Session = Depends(get_db),
+    current_user: dict = CurrentUserOrApiKey,
+):
+    """
+    查詢訓練資源配額用量：
+    - Kaggle：本週已用 / 剩餘（30hr/週免費）
+    - Lightning：本月已用（22hr/月免費）
+    """
+    from resources.prober import KaggleQuotaTracker
+    from models import Submission
+
+    # Kaggle 本週
+    kaggle_used = 0.0
+    try:
+        tracker = KaggleQuotaTracker()
+        kaggle_used = tracker.get_used_hours_this_week(db)
+    except Exception:
+        pass
+
+    kaggle_remaining = max(0.0, KaggleQuotaTracker.WEEKLY_LIMIT_HOURS - kaggle_used)
+
+    # Lightning 本月（本月 1 日 00:00 UTC 起）
+    today = datetime.utcnow()
+    month_start = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    lightning_rows = (
+        db.query(Submission)
+        .filter(
+            Submission.training_resource == "lightning",
+            Submission.training_started_at >= month_start,
+            Submission.gpu_seconds.isnot(None),
+        )
+        .all()
+    )
+    lightning_used_seconds = sum(r.gpu_seconds for r in lightning_rows if r.gpu_seconds)
+    lightning_used_hours = round(lightning_used_seconds / 3600.0, 2)
+    lightning_monthly_limit = 22.0
+    lightning_remaining = max(0.0, lightning_monthly_limit - lightning_used_hours)
+
+    # Kaggle GPU 分 platform 統計
+    kaggle_rows = (
+        db.query(Submission)
+        .filter(
+            Submission.training_resource == "kaggle",
+            Submission.gpu_seconds.isnot(None),
+        )
+        .all()
+    )
+    kaggle_total_seconds = sum(r.gpu_seconds for r in kaggle_rows if r.gpu_seconds)
+
+    return {
+        "kaggle": {
+            "weekly_limit_hours": KaggleQuotaTracker.WEEKLY_LIMIT_HOURS,
+            "used_hours_this_week": round(kaggle_used, 2),
+            "remaining_hours_this_week": round(kaggle_remaining, 2),
+            "total_gpu_hours_all_time": round(kaggle_total_seconds / 3600.0, 2),
+        },
+        "lightning": {
+            "monthly_limit_hours": lightning_monthly_limit,
+            "used_hours_this_month": lightning_used_hours,
+            "remaining_hours_this_month": round(lightning_remaining, 2),
+            "is_free_tier": True,
+        },
+    }
+
+
 @router.get("/poll-stats")
 def poll_stats(
     db: Session = Depends(get_db),
