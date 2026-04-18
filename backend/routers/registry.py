@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from models import ModelVersion, Submission, get_db
-from auth import CurrentUser, get_api_key
+from auth import CurrentUser, CurrentUserOrApiKey, get_api_key
 
 router = APIRouter()
 
@@ -245,8 +245,28 @@ async def accept_version(
     else:
         obj.is_current = False
 
+    # 同步 Submission.status → accepted（只從 trained 狀態升級）
+    sub = db.query(Submission).filter(Submission.req_no == obj.req_no).first()
+    if sub and sub.status == "trained":
+        sub.status = "accepted"
+        db.add(sub)
+
     db.commit()
     db.refresh(obj)
+
+    # 通知驗收事件（accept 事件）
+    if sub:
+        try:
+            from notifications import notify_event
+            import asyncio as _asyncio
+            try:
+                _loop = _asyncio.get_running_loop()
+                _loop.create_task(notify_event("accept", sub))
+            except RuntimeError:
+                _asyncio.run(notify_event("accept", sub))
+        except Exception:
+            pass
+
     return obj
 
 
@@ -267,7 +287,7 @@ async def delete_version(
 async def download_model(
     id: int,
     db: Session = Depends(get_db),
-    api_key: str = Depends(get_api_key),
+    current_user: dict = CurrentUserOrApiKey,
 ):
     """
     下載模型檔案。使用 API Key 認證，供跨公司機器對機器呼叫。

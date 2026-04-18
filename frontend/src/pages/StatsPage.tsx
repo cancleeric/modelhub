@@ -89,6 +89,28 @@ export default function StatsPage() {
       ? leadTimes.reduce((a, b) => a + b, 0) / leadTimes.length
       : null
 
+    // 訓練資源分布
+    const resourceDist: Record<string, number> = { kaggle: 0, local_mps: 0, unknown: 0 }
+    s.forEach((x) => {
+      const r = x.training_resource
+      if (!r) {
+        resourceDist.unknown += 1
+      } else if (r === 'kaggle') {
+        resourceDist.kaggle += 1
+      } else if (r === 'local_mps') {
+        resourceDist.local_mps += 1
+      } else {
+        // ssh@host 等歸為 unknown
+        resourceDist.unknown += 1
+      }
+    })
+
+    // 驗收通過率
+    const acceptedCount = s.filter((x) => x.status === 'accepted').length
+    const failedCount = s.filter((x) => x.status === 'training_failed' || x.status === 'failed').length
+    const passRateDenom = acceptedCount + failedCount
+    const passRate = passRateDenom > 0 ? (acceptedCount / passRateDenom) * 100 : null
+
     return {
       monthSubs: monthSubs.length,
       monthTrained: monthTrained.length,
@@ -102,6 +124,8 @@ export default function StatsPage() {
       totalSubs: s.length,
       totalVersions: v.length,
       currentCount: v.filter((x: ModelVersion) => x.is_current).length,
+      resourceDist,
+      passRate,
     }
   }, [subs, versions])
 
@@ -168,6 +192,12 @@ export default function StatsPage() {
         <KpiCard label="總需求單" value={stats.totalSubs} sub="all time" tone="slate" />
         <KpiCard label="模型版本" value={stats.totalVersions} sub={`當前 ${stats.currentCount} 個`} tone="slate" />
         <KpiCard label="活躍狀態" value={Object.keys(stats.byStatus).length} sub="status kinds" tone="slate" />
+        <KpiCard
+          label="驗收通過率"
+          value={stats.passRate != null ? `${stats.passRate.toFixed(1)}%` : '-'}
+          sub="accepted / (accepted + failed)"
+          tone="green"
+        />
       </div>
 
       {/* P2-5: 近 12 週趨勢折線圖 */}
@@ -213,7 +243,10 @@ export default function StatsPage() {
         <BarCard title="按業務公司分布" data={stats.byCompany} />
       </div>
 
-      <BarCard title="按狀態分布" data={stats.byStatus} />
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+        <BarCard title="按狀態分布" data={stats.byStatus} />
+        <BarCard title="訓練資源分布" data={stats.resourceDist} />
+      </div>
     </div>
   )
 }

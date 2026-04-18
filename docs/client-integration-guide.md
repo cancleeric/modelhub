@@ -113,6 +113,54 @@ python pull_latest_model.py \
       --output app/models/pid_model.pt
 ```
 
+## 新欄位說明（Sprint 16）
+
+### Submission 新增欄位
+
+| 欄位 | 型別 | 說明 |
+|------|------|------|
+| `training_resource` | `string \| null` | 訓練所用資源，值為 `kaggle`、`local_mps` 或 `ssh@<host>` |
+| `per_class_metrics` | `string \| null` | JSON 字串，格式為 `{"class_name": ap50_float}`，可用 `JSON.parse()` 解析 |
+
+### ModelVersion 欄位
+
+| 欄位 | 型別 | 說明 |
+|------|------|------|
+| `pass_fail` | `"pass" \| "fail" \| null` | 依 `map50_actual` 與需求單 `map50_target` 比對的判定結果 |
+
+### GET /api/health/resources
+
+查詢所有訓練資源的可用狀態，需 Bearer token 或 API Key 認證。
+
+```bash
+curl -H "X-Api-Key: $MODELHUB_API_KEY" \
+  "http://modelhub.hurricanecore.internal:8950/api/health/resources"
+```
+
+**Response**
+
+```json
+{
+  "kaggle": {
+    "available": true,
+    "quota_used_hours": 5.2,
+    "quota_remaining": 24.8
+  },
+  "local_mps": {
+    "available": true,
+    "device": "mps"
+  },
+  "ssh_hosts": [
+    {
+      "host": "user@192.168.50.83",
+      "available": true,
+      "gpus": [{"util": 20, "free_mb": 8000}],
+      "free_memory_mb": 8000
+    }
+  ]
+}
+```
+
 ## 聯絡
 
 ModelHub 由 **HurricaneCore** 維護。問題請開 issue 至 `hurricanecore/modelhub` 或聯絡 HurricaneCore CTO。

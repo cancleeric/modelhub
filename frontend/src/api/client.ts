@@ -101,6 +101,11 @@ export interface Submission {
   // Dataset unblock
   dataset_status: string | null
   blocked_reason: string | null
+  // Sprint 16
+  training_resource?: string | null
+  per_class_metrics?: string | null
+  dataset_train_count?: number | null
+  model_output_path?: string | null
   created_at: string
 }
 

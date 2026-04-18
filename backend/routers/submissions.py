@@ -148,6 +148,10 @@ class SubmissionOut(BaseModel):
     # Dataset unblock
     dataset_status: Optional[str] = "ready"
     blocked_reason: Optional[str] = None
+    # Sprint 15 P2-3 / Sprint 16 P1-2
+    training_resource: Optional[str] = None
+    # Sprint 13 P2-A
+    per_class_metrics: Optional[str] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -324,13 +328,9 @@ async def update_training_result(
     obj.training_completed_at = now
 
     if payload.metrics:
-        # 把 metrics 中的 map50 / map50_95 同步寫回標準欄位（方便查詢）
-        m = payload.metrics
-        if "map50" in m:
-            try:
-                obj.map50_threshold = float(m["map50"])
-            except Exception:
-                pass
+        # map50_threshold 是需求人填的門檻規格，不能被訓練結果覆蓋
+        # 實測值僅用於 pass/fail 比對，不寫回 map50_threshold
+        pass
 
     # Sprint 13 P2-A: 儲存 per_class_metrics
     if payload.per_class_metrics:

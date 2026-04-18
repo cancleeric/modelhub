@@ -2,17 +2,20 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { registryApi } from '../api/client'
+import { getToken } from '../auth'
 import StatusBadge from '../components/StatusBadge'
-
-const API_KEY = import.meta.env.VITE_MODELHUB_API_KEY ?? 'modelhub-dev-key-2026'
 
 function downloadModel(id: number, filename: string) {
   const url = `/api/registry/${id}/download`
   const a = document.createElement('a')
   a.href = url
   a.download = filename || `model-${id}.pt`
-  // API Key 下載：透過 fetch + blob，因為需要自訂 header
-  fetch(url, { headers: { 'X-Api-Key': API_KEY } })
+  const token = getToken()
+  if (!token) {
+    alert('尚未登入，請先登入再下載')
+    return
+  }
+  fetch(url, { headers: { 'Authorization': `Bearer ${token}` } })
     .then((r) => {
       if (!r.ok) throw new Error(`下載失敗 (${r.status})`)
       return r.blob()
@@ -153,12 +156,18 @@ export default function RegistryPage() {
                     {v.file_path || '-'}
                   </td>
                   <td className="px-4 py-3 flex gap-2 items-center">
-                    <Link
-                      to={`/registry/${v.id}/accept`}
-                      className="text-indigo-600 text-xs hover:underline"
-                    >
-                      驗收
-                    </Link>
+                    {v.status === 'pending_acceptance' ? (
+                      <Link
+                        to={`/registry/${v.id}/accept`}
+                        className="text-indigo-600 text-xs hover:underline"
+                      >
+                        驗收
+                      </Link>
+                    ) : (
+                      <span className="text-xs text-gray-400">
+                        {v.pass_fail ? (v.pass_fail === 'pass' ? '已通過' : '已失敗') : '已完成'}
+                      </span>
+                    )}
                     {v.file_path && (
                       <button
                         onClick={() =>

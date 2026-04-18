@@ -45,6 +45,11 @@ export default function SubmissionListPage() {
   const { data: allData } = useQuery({
     queryKey: ['submissions-all'],
     queryFn: () => submissionsApi.list(),
+    refetchInterval: (query) => {
+      const d = query.state.data
+      if (d && d.some((s) => s.status === 'training')) return 30000
+      return false
+    },
   })
 
   // Load filtered submissions for table
@@ -56,6 +61,11 @@ export default function SubmissionListPage() {
         product: productFilter || undefined,
         dataset_status: datasetFilter || undefined,
       }),
+    refetchInterval: (query) => {
+      const d = query.state.data
+      if (d && d.some((s) => s.status === 'training')) return 30000
+      return false
+    },
   })
 
   // Compute 4 stats from allData
@@ -209,7 +219,15 @@ export default function SubmissionListPage() {
                   <td className="px-4 py-3 text-gray-700">{s.product}</td>
                   <td className="px-4 py-3 text-gray-500">{s.submitter || '-'}</td>
                   <td className="px-4 py-3">
-                    <StatusBadge status={s.status} />
+                    <span className="inline-flex items-center gap-1.5">
+                      <StatusBadge status={s.status} />
+                      {s.status === 'training' && (
+                        <span
+                          className="inline-block w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"
+                          title="訓練中"
+                        />
+                      )}
+                    </span>
                   </td>
                   <td className="px-4 py-3">
                     {s.dataset_status ? (

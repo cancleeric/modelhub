@@ -62,6 +62,10 @@ export default function SubmissionDetailPage() {
     queryKey: ['submission', req_no],
     queryFn: () => submissionsApi.get(req_no!),
     enabled: !!req_no,
+    refetchInterval: (query) => {
+      const s = query.state.data?.status
+      return s === 'training' ? 30000 : false
+    },
   })
 
   const { data: versions } = useQuery({
@@ -359,6 +363,9 @@ export default function SubmissionDetailPage() {
 
           <InfoCard sub={sub} />
 
+          {/* Per-class Metrics 視覺化 */}
+          <PerClassMetricsCard sub={sub} />
+
           {/* 狀態機操作 */}
           {actions.length > 0 && (
             <div className="bg-white rounded shadow p-5 mb-4">
@@ -634,6 +641,7 @@ function InfoCard({ sub }: { sub: Submission }) {
         <Item label="模型類型" value={sub.model_type} />
         <Item label="mAP50 目標" value={sub.map50_target?.toString()} />
         <Item label="架構" value={sub.arch} />
+        <Item label="訓練資源" value={sub.training_resource} />
         <Item label="資料來源" value={sub.dataset_source} />
         <Item label="標注格式" value={sub.label_format} />
         <Item label="預計交付" value={sub.expected_delivery} />
@@ -712,6 +720,56 @@ function BudgetBar({
           />
         )}
       </div>
+    </div>
+  )
+}
+
+function PerClassMetricsCard({ sub }: { sub: Submission }) {
+  if (!sub.per_class_metrics) return null
+  let metrics: Record<string, number> | null = null
+  try {
+    metrics = JSON.parse(sub.per_class_metrics)
+  } catch {
+    return null
+  }
+  if (!metrics || typeof metrics !== 'object') return null
+  const entries = Object.entries(metrics)
+  if (entries.length === 0) return null
+
+  return (
+    <div className="bg-white rounded shadow p-5 mb-4">
+      <h3 className="text-sm font-semibold text-gray-700 mb-3">Per-class AP50 指標</h3>
+      <table className="min-w-full text-sm">
+        <thead className="bg-gray-50 border-b">
+          <tr>
+            <th className="text-left px-3 py-2 text-gray-500 font-medium">Class</th>
+            <th className="text-left px-3 py-2 text-gray-500 font-medium">AP50</th>
+            <th className="text-left px-3 py-2 text-gray-500 font-medium">狀態</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y">
+          {entries.map(([cls, ap50]) => {
+            const val = typeof ap50 === 'number' ? ap50 : parseFloat(String(ap50))
+            const color =
+              val >= 0.7
+                ? 'text-green-600'
+                : val >= 0.5
+                ? 'text-yellow-600'
+                : 'text-red-600'
+            const label =
+              val >= 0.7 ? '良好' : val >= 0.5 ? '偏低' : '不足'
+            return (
+              <tr key={cls} className="hover:bg-gray-50">
+                <td className="px-3 py-2 font-mono text-xs text-gray-700">{cls}</td>
+                <td className={`px-3 py-2 font-semibold ${color}`}>
+                  {isNaN(val) ? '-' : val.toFixed(4)}
+                </td>
+                <td className={`px-3 py-2 text-xs font-medium ${color}`}>{label}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
     </div>
   )
 }

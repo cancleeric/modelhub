@@ -2,7 +2,8 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import submissions, registry, actions, kaggle, api_keys, predict
+from fastapi.openapi.utils import get_openapi
+from routers import submissions, registry, actions, kaggle, api_keys, predict, health
 from models import init_db
 from pollers.kaggle_poller import start_scheduler, stop_scheduler
 from version import VERSION, BUILD_INFO
@@ -42,13 +43,43 @@ app.include_router(actions.router, prefix="/api/submissions", tags=["actions"])
 app.include_router(kaggle.router, prefix="/api/submissions", tags=["kaggle"])
 app.include_router(api_keys.router, prefix="/api/admin/api-keys", tags=["admin"])
 app.include_router(predict.router, prefix="/api/predict", tags=["predict"])
+app.include_router(health.router, prefix="/api/health", tags=["health"])
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "modelhub", **BUILD_INFO}
+    from pollers.kaggle_poller import get_last_poll_at, _scheduler as _sched
+    last_poll = get_last_poll_at()
+    return {
+        "status": "ok",
+        "service": "modelhub",
+        "poller_last_run": last_poll.isoformat() if last_poll else None,
+        "scheduler_running": bool(_sched and _sched.running),
+        **BUILD_INFO,
+    }
 
 
 @app.get("/version")
 def version():
     return BUILD_INFO
+
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title="ModelHub API",
+        version=VERSION,
+        routes=app.routes,
+    )
+    schema.setdefault("components", {})
+    schema["components"]["securitySchemes"] = {
+        "BearerAuth": {"type": "http", "scheme": "bearer"},
+        "ApiKeyHeader": {"type": "apiKey", "in": "header", "name": "X-Api-Key"},
+    }
+    schema["security"] = [{"BearerAuth": []}, {"ApiKeyHeader": []}]
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = custom_openapi  # type: ignore[method-assign]

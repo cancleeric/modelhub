@@ -121,7 +121,7 @@ export default function SubmissionFormPage() {
         input_spec: sub.input_spec ?? '',
         dataset_source: sub.dataset_source ?? '',
         dataset_count: sub.dataset_count ?? '',
-        dataset_train_count: '',
+        dataset_train_count: sub.dataset_train_count?.toString() ?? '',
         dataset_val_count: sub.dataset_val_count?.toString() ?? '',
         dataset_test_count: sub.dataset_test_count?.toString() ?? '',
         label_format: sub.label_format ?? '',
