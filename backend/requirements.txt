@@ -8,3 +8,4 @@ kaggle==1.6.17
 python-multipart==0.0.9
 alembic==1.13.3
 psycopg2-binary==2.9.10
+lightning-sdk
