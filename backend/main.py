@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
-from routers import submissions, registry, actions, kaggle, api_keys, predict, health
+from routers import submissions, registry, actions, kaggle, api_keys, predict, health, inference
 from models import init_db
 from pollers.kaggle_poller import start_scheduler, stop_scheduler
 import pollers.lightning_poller as _lightning_poller
@@ -48,6 +48,7 @@ app.include_router(kaggle.router, prefix="/api/submissions", tags=["kaggle"])
 app.include_router(api_keys.router, prefix="/api/admin/api-keys", tags=["admin"])
 app.include_router(predict.router, prefix="/api/predict", tags=["predict"])
 app.include_router(health.router, prefix="/api/health", tags=["health"])
+app.include_router(inference.router, prefix="/v1", tags=["inference"])
 
 
 @app.get("/health")
