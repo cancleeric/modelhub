@@ -372,6 +372,62 @@ async def _check_overtime(db: Session, sub: Submission) -> None:
     await notify_event("training_overtime", sub)
 
 
+async def _check_quota_warning(db: Session) -> None:
+    """
+    P1-2: Kaggle 配額預警。
+    剩 < 5h 且本週還沒發過預警時，寫 history + notify_event。
+    """
+    QUOTA_WARN_THRESHOLD = float(os.environ.get("KAGGLE_QUOTA_WARN_HOURS", "5"))
+    try:
+        from resources.prober import KaggleQuotaTracker
+        tracker = KaggleQuotaTracker()
+        remaining = tracker.get_remaining_hours(db)
+        if remaining >= QUOTA_WARN_THRESHOLD:
+            return
+
+        # 本週是否已發過預警（用 SubmissionHistory 記錄，req_no="__quota__"）
+        from models import SubmissionHistory
+        from datetime import timedelta
+        today = datetime.utcnow()
+        monday = today - timedelta(days=today.weekday())
+        week_start = monday.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        already = (
+            db.query(SubmissionHistory)
+            .filter(
+                SubmissionHistory.req_no == "__quota__",
+                SubmissionHistory.action == "kaggle_quota_warning",
+                SubmissionHistory.created_at >= week_start,
+            )
+            .first()
+        )
+        if already:
+            return
+
+        # 寫 history 防重複
+        row = SubmissionHistory(
+            req_no="__quota__",
+            action="kaggle_quota_warning",
+            actor="kaggle-poller",
+            note=f"本週剩餘配額 {remaining:.1f}h（低於 {QUOTA_WARN_THRESHOLD}h 閾值）",
+            meta=json.dumps({"remaining_hours": remaining, "threshold": QUOTA_WARN_THRESHOLD},
+                            ensure_ascii=False),
+        )
+        db.add(row)
+        db.commit()
+
+        # 通知（用 notify_event 的低階 notify 直接發給 CTO）
+        from notifications import notify, CTO_TARGET
+        await notify(
+            CTO_TARGET,
+            f"[ModelHub] Kaggle 配額預警：本週剩餘 {remaining:.1f} 小時，"
+            f"低於 {QUOTA_WARN_THRESHOLD}h 閾值，請注意配額用量。",
+        )
+        logger.warning("Kaggle quota warning sent: remaining=%.1fh", remaining)
+    except Exception as e:
+        logger.warning("_check_quota_warning failed: %s", e)
+
+
 async def poll_once() -> dict:
     """掃一輪 status=training 的 submission"""
     global _last_poll_at
@@ -386,6 +442,9 @@ async def poll_once() -> dict:
 
     db: Session = SessionLocal()
     try:
+        # P1-2: 每次 poll 時檢查配額預警
+        await _check_quota_warning(db)
+
         rows = db.query(Submission).filter(Submission.status == "training").all()
         summary = {"checked": len(rows), "changed": 0, "complete": 0, "error": 0}
 

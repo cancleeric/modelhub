@@ -90,6 +90,10 @@ class Submission(Base):
     blocked_reason = Column(String, nullable=True)
     # --- Sprint 13 P2-A: per-class metrics（JSON string, {class_name: ap50}）---
     per_class_metrics = Column(String, nullable=True)
+    # --- Sprint 15 P2-3: 訓練資源記錄（kaggle/local_mps/ssh@host）---
+    training_resource = Column(String, nullable=True)
+    # --- Sprint 17 P1-4: Lightning Studio 名稱 ---
+    lightning_studio_name = Column(String, nullable=True)
     # --- 時間戳記 ---
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -182,6 +186,10 @@ _MIGRATIONS = [
     ("submissions", "model_output_path",        "TEXT"),
     # Sprint 13 P2-A: per-class AP50 metrics（JSON string）
     ("submissions", "per_class_metrics",        "TEXT"),
+    # Sprint 15 P2-3: 訓練資源記錄
+    ("submissions", "training_resource",        "VARCHAR"),
+    # Sprint 17 P1-4: Lightning Studio 名稱
+    ("submissions", "lightning_studio_name",    "VARCHAR"),
 ]
 
 

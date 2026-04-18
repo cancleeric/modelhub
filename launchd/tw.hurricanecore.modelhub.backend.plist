@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>tw.hurricanecore.modelhub.backend</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/docker</string>
+        <string>restart</string>
+        <string>modelhub-api-dev</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <!-- 只在容器非正常退出時重啟（exit code != 0）-->
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/yinghaowang/HurricaneCore/modelhub</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/yinghaowang/HurricaneCore/modelhub/logs/backend_launchd.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/yinghaowang/HurricaneCore/modelhub/logs/backend_launchd_err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/yinghaowang</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <!-- 崩潰重啟節流：60 秒內最多重啟 1 次 -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+</dict>
+</plist>

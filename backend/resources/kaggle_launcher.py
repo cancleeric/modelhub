@@ -75,6 +75,21 @@ class KaggleLauncher:
                 logger.info("Used metadata slug=%s for req_no=%s", kernel_slug, req_no)
             else:
                 logger.warning("Could not determine kernel_slug for req_no=%s", req_no)
+                # P3-3: slug 解析失敗寫 history
+                try:
+                    import json as _json
+                    from models import SubmissionHistory
+                    row = SubmissionHistory(
+                        req_no=req_no,
+                        action="slug_parse_failed",
+                        actor="kaggle-launcher",
+                        note=result.stdout[:500] if result.stdout else None,
+                        meta=_json.dumps({"stderr": result.stderr[:200]}, ensure_ascii=False),
+                    )
+                    db.add(row)
+                    db.commit()
+                except Exception as hist_err:
+                    logger.warning("Failed to write slug_parse_failed history: %s", hist_err)
 
         submission.kaggle_status = "queued"
         db.commit()

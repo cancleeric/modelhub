@@ -1,0 +1,14 @@
+{
+  "id": "boardgamegroup/mh-2026-011-quality-router-efficientnet-b0",
+  "title": "MH-2026-011 Quality Router EfficientNet-B0",
+  "code_file": "train_quality_router.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": ["boardgamegroup/aicad-quality-router-flat"],
+  "competition_sources": [],
+  "kernel_sources": [],
+  "req_no": "MH-2026-011"
+}

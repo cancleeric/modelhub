@@ -1,0 +1,14 @@
+{
+  "id": "boardgamegroup/mh-2026-010-pid-symbols-mobilenetv2",
+  "title": "MH-2026-010 PID Symbols MobileNetV2",
+  "code_file": "train_pid_symbols.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": ["boardgamegroup/aicad-pid-symbols-flat"],
+  "competition_sources": [],
+  "kernel_sources": [],
+  "req_no": "MH-2026-010"
+}

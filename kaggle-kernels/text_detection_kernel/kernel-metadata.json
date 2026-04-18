@@ -9,5 +9,6 @@
   "enable_internet": true,
   "dataset_sources": ["boardgamegroup/aicad-text-detection"],
   "competition_sources": [],
-  "kernel_sources": []
+  "kernel_sources": [],
+  "req_no": "MH-2026-006"
 }

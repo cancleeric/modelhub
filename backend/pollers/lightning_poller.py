@@ -1,5 +1,5 @@
 """
-Lightning AI Job poller — Sprint 15 P2-1
+Lightning AI Job poller — Sprint 15 P2-1 / Sprint 17 P0-3
 
 每 120 秒 poll 所有 platform=lightning 且 status=training 的 submission：
 - 狀態變化寫 submission_history
@@ -10,11 +10,13 @@ Lightning AI Job poller — Sprint 15 P2-1
 需要：LIGHTNING_API_KEY env var。
 如果 env var 未設，poller 還是會啟動但會 log warning，並跳過 API 呼叫。
 
+Sprint 17 P0-3: 改為 APScheduler 模式（poll_once + start_scheduler），
+與 kaggle_poller 架構一致，由 main.py lifespan 統一啟動。
+
 TODO: 所有標記 TODO 的區塊待取得 LIGHTNING_API_KEY 後補完。
       取得方式：https://lightning.ai → Settings → API Keys
 """
 
-import asyncio
 import json
 import logging
 import os
@@ -59,9 +61,9 @@ def _get_lightning_studio(studio_name: str):
         return None
 
 
-async def _fetch_job_status(studio_name: str) -> Optional[dict]:
+def _fetch_job_status(studio_name: str) -> Optional[dict]:
     """
-    查詢 Lightning Studio job 狀態。
+    查詢 Lightning Studio job 狀態（同步版本，供 APScheduler 呼叫）。
 
     TODO: 待 API Key 後補完。
     預期回傳格式：
@@ -81,7 +83,7 @@ async def _fetch_job_status(studio_name: str) -> Optional[dict]:
     return None
 
 
-async def _download_job_output(studio_name: str, dest_dir: str) -> Optional[str]:
+def _download_job_output(studio_name: str, dest_dir: str) -> Optional[str]:
     """
     下載 Lightning job output（result.json + best.pt 等）。
 
@@ -112,113 +114,174 @@ def _normalize_status(raw_status: str) -> str:
     return mapping.get(raw_status.lower(), raw_status.lower())
 
 
-async def _process_submission(
+def _append_history(db: Session, req_no: str, action: str, meta: Optional[dict] = None,
+                    note: Optional[str] = None) -> None:
+    from models import SubmissionHistory
+    row = SubmissionHistory(
+        req_no=req_no,
+        action=action,
+        actor="lightning-poller",
+        note=note,
+        meta=json.dumps(meta, ensure_ascii=False) if meta else None,
+    )
+    db.add(row)
+
+
+def _process_submission(
     db: Session,
     submission: "Submission",
 ) -> None:
     """
-    處理單一 Lightning submission 的 poll 週期。
+    處理單一 Lightning submission 的 poll 週期（同步版本）。
     結構與 kaggle_poller._process_submission 一致。
 
+    Sprint 17 P1-4: 改讀 submission.lightning_studio_name（若有設定）。
     TODO: 完整邏輯待 API Key 後補完。
     """
-    studio_name = getattr(submission, "kaggle_kernel_slug", None)
+    # P1-4: 優先讀 lightning_studio_name 欄位
+    studio_name = getattr(submission, "lightning_studio_name", None) or \
+                  getattr(submission, "kaggle_kernel_slug", None)
     if not studio_name:
-        logger.warning("submission %s 無 studio_name，跳過", submission.id)
+        logger.warning("submission %s 無 studio_name，跳過", submission.req_no)
         return
 
-    status_info = await _fetch_job_status(studio_name)
+    status_info = _fetch_job_status(studio_name)
     if status_info is None:
         # API Key 未設或 TODO 尚未實作，靜默跳過
         return
 
     status = status_info.get("status", "unknown")
-    logger.info("submission %s studio=%s status=%s", submission.id, studio_name, status)
+    logger.info("submission %s studio=%s status=%s", submission.req_no, studio_name, status)
 
     # 狀態變化寫 submission_history
-    if submission.status != status:
-        submission.status = status
-        submission.updated_at = datetime.utcnow()
+    if submission.kaggle_status != status:
+        submission.kaggle_status = status
+        submission.kaggle_status_updated_at = datetime.utcnow()
+        _append_history(db, req_no=submission.req_no, action="lightning_status_change",
+                        meta={"new_status": status})
         db.commit()
 
     if status == "complete":
         # TODO: 下載 output → 解析 metrics → 建 ModelVersion
-        dest_dir = str(Path(LIGHTNING_DOWNLOAD_DIR) / str(submission.id))
-        output_dir = await _download_job_output(studio_name, dest_dir)
+        dest_dir = str(Path(LIGHTNING_DOWNLOAD_DIR) / str(submission.req_no))
+        output_dir = _download_job_output(studio_name, dest_dir)
         if output_dir:
-            # 與 kaggle_poller 相同的 parse + create ModelVersion 流程
             result_json_candidates = list(Path(output_dir).rglob("result.json"))
             if result_json_candidates:
                 raw_log = result_json_candidates[0].read_text()
                 metrics = parse_training_log(raw_log)
-                logger.info("submission %s metrics=%s", submission.id, metrics)
+                logger.info("submission %s metrics=%s", submission.req_no, metrics)
                 # TODO: create ModelVersion（參考 kaggle_poller 實作）
             else:
-                logger.warning("submission %s 無 result.json，無法解析 metrics", submission.id)
+                logger.warning("submission %s 無 result.json，無法解析 metrics", submission.req_no)
 
     elif status == "error":
-        submission.status = "training_failed"
+        submission.status = "failed"
         db.commit()
-        await notify_event(
-            event="training_failed",
-            req_no=submission.req_no,
-            message=f"Lightning job {studio_name} 失敗",
-        )
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(notify_event("training_failed", submission))
+            else:
+                loop.run_until_complete(notify_event("training_failed", submission))
+        except Exception:
+            pass
 
     # Overtime 偵測
-    created_at = getattr(submission, "created_at", None)
-    if created_at and status in ("running", "queued"):
-        elapsed = datetime.utcnow() - created_at
+    training_started = getattr(submission, "training_started_at", None)
+    if training_started and status in ("running", "queued"):
+        elapsed = datetime.utcnow() - training_started
         if elapsed > timedelta(hours=OVERTIME_HOURS):
             logger.warning(
                 "submission %s overtime! studio=%s elapsed=%.1fh",
-                submission.id, studio_name, elapsed.total_seconds() / 3600,
+                submission.req_no, studio_name, elapsed.total_seconds() / 3600,
             )
-            await notify_event(
-                event="training_overtime",
-                req_no=submission.req_no,
-                message=f"Lightning job {studio_name} 超過 {OVERTIME_HOURS}h 未完成",
-            )
-
-
-async def run_lightning_poller() -> None:
-    """
-    Lightning poller 主迴圈。結構與 kaggle_poller.run_poller 一致。
-
-    TODO: 完整邏輯待 API Key 後補完。目前會啟動但跳過所有 API 呼叫。
-    """
-    logger.info("Lightning poller 啟動 (interval=%ds)", POLL_INTERVAL_SECONDS)
-    if not _lightning_env_ready():
-        logger.warning(
-            "LIGHTNING_API_KEY 未設。poller 以 no-op 模式運行。\n"
-            "取得方式：https://lightning.ai → Settings → API Keys"
-        )
-
-    while True:
-        try:
-            db: Session = SessionLocal()
+            import asyncio
             try:
-                # TODO: 實際查詢 platform=lightning 的 submission
-                # submissions = (
-                #     db.query(Submission)
-                #     .filter(
-                #         Submission.platform == "lightning",
-                #         Submission.status.in_(["training", "queued", "running"]),
-                #     )
-                #     .all()
-                # )
-                # for sub in submissions:
-                #     await _process_submission(db, sub)
-                logger.debug("[TODO] Lightning poller tick（待 API Key 後補 query）")
-            finally:
-                db.close()
-        except Exception as exc:
-            logger.exception("Lightning poller 迴圈例外: %s", exc)
-
-        await asyncio.sleep(POLL_INTERVAL_SECONDS)
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(notify_event("training_overtime", submission))
+                else:
+                    loop.run_until_complete(notify_event("training_overtime", submission))
+            except Exception:
+                pass
 
 
-if __name__ == "__main__":
-    import logging as _logging
-    _logging.basicConfig(level=_logging.INFO)
-    asyncio.run(run_lightning_poller())
+def poll_once() -> dict:
+    """
+    掃一輪 platform=lightning 且 status=training 的 submission（同步，供 APScheduler 呼叫）。
+    LIGHTNING_API_KEY 未設時直接 return。
+    """
+    global _last_poll_at
+    _last_poll_at = datetime.utcnow()
+
+    if not _lightning_env_ready():
+        logger.debug("LIGHTNING_API_KEY not set, skip lightning poll")
+        return {"skipped": True, "reason": "LIGHTNING_API_KEY not set"}
+
+    db: Session = SessionLocal()
+    try:
+        # TODO: 實際查詢 platform=lightning 的 submission
+        # rows = (
+        #     db.query(Submission)
+        #     .filter(
+        #         Submission.platform == "lightning",
+        #         Submission.status.in_(["training", "queued", "running"]),
+        #     )
+        #     .all()
+        # )
+        # summary = {"checked": len(rows), "changed": 0}
+        # for sub in rows:
+        #     _process_submission(db, sub)
+        logger.debug("[TODO] Lightning poller tick（待 API Key 後補 query）")
+        return {"skipped": True, "reason": "not implemented"}
+    except Exception as exc:
+        logger.exception("Lightning poller poll_once 例外: %s", exc)
+        return {"error": str(exc)}
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Scheduler lifecycle（main.py 呼叫）
+# ---------------------------------------------------------------------------
+
+_scheduler = None
+_last_poll_at: Optional[datetime] = None
+
+
+def get_last_poll_at() -> Optional[datetime]:
+    return _last_poll_at
+
+
+def start_scheduler():
+    global _scheduler
+    try:
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    except ImportError:
+        logger.warning("apscheduler not installed, lightning poller disabled")
+        return None
+
+    if _scheduler:
+        return _scheduler
+
+    _scheduler = AsyncIOScheduler(timezone="Asia/Taipei")
+    _scheduler.add_job(
+        poll_once, "interval",
+        seconds=POLL_INTERVAL_SECONDS,
+        id="lightning-poller",
+        max_instances=1,
+        coalesce=True,
+    )
+    _scheduler.start()
+    logger.info("Lightning poller scheduler started (interval=%ds)", POLL_INTERVAL_SECONDS)
+    return _scheduler
+
+
+def stop_scheduler():
+    global _scheduler
+    if _scheduler:
+        _scheduler.shutdown(wait=False)
+        _scheduler = None
+        logger.info("Lightning scheduler stopped")

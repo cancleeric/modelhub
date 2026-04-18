@@ -6,6 +6,7 @@ from fastapi.openapi.utils import get_openapi
 from routers import submissions, registry, actions, kaggle, api_keys, predict, health
 from models import init_db
 from pollers.kaggle_poller import start_scheduler, stop_scheduler
+import pollers.lightning_poller as _lightning_poller
 from version import VERSION, BUILD_INFO
 
 logging.basicConfig(
@@ -18,11 +19,14 @@ logging.basicConfig(
 async def lifespan(app: FastAPI):
     init_db()
     scheduler = start_scheduler()
+    lightning_scheduler = _lightning_poller.start_scheduler()
     try:
         yield
     finally:
         if scheduler:
             stop_scheduler()
+        if lightning_scheduler:
+            _lightning_poller.stop_scheduler()
 
 
 app = FastAPI(title="ModelHub", version=VERSION, lifespan=lifespan)

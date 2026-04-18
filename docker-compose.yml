@@ -25,6 +25,8 @@ services:
       # DATABASE_URL: 從 Hurricane Vault 取得 (hurricanecore/dev/MODELHUB_DATABASE_URL)
       # 未設時使用 SQLite（預設值）；PostgreSQL 格式：postgresql://user:pass@host:5432/dbname
       - DATABASE_URL=${DATABASE_URL:-}
+      # Sprint 17 P0-2: 本機訓練已停用，強制走線上 GPU（Kaggle/Lightning）
+      - DISABLE_LOCAL_TRAINING=true
     restart: unless-stopped
     networks:
       - squid_dev_network

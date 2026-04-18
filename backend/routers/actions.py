@@ -7,15 +7,21 @@ routers/actions.py — 需求單狀態機 API
 """
 
 import json
+import os
 from datetime import datetime
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
-from models import Submission, SubmissionHistory, get_db
+from models import Submission, SubmissionHistory, SessionLocal, get_db
 from notifications import notify_event
 from auth import CurrentUser, CurrentUserOrApiKey, require_role
+
+import logging
+_logger = logging.getLogger("modelhub.routers.actions")
+
+DISABLE_LOCAL_TRAINING = os.getenv("DISABLE_LOCAL_TRAINING", "false").lower() == "true"
 
 router = APIRouter()
 
@@ -206,6 +212,7 @@ async def get_submission_history(
 async def perform_action(
     req_no: str,
     action: str,
+    background_tasks: BackgroundTasks,
     payload: ActionPayload = ActionPayload(),
     db: Session = Depends(get_db),
     current_user: dict = CurrentUserOrApiKey,
@@ -258,6 +265,8 @@ async def perform_action(
     if action == "start_training":
         obj.training_started_at = now
         obj.total_attempts = (obj.total_attempts or 0) + 1
+        # Sprint 15 P1-3: 自動 Kaggle 派發（同步，沿用舊行為）
+        _handle_start_training_resource(obj, db)
     if action == "complete_training":
         obj.training_completed_at = now
     if action == "resubmit":
@@ -270,6 +279,17 @@ async def perform_action(
     db.commit()
     db.refresh(obj)
 
+    # P0-1 + P1-1: approve 後自動觸發 start_training（背景執行）
+    # 先設 kaggle_status="queued" 讓前端知道在排隊
+    if action == "approve":
+        obj.kaggle_status = "queued"
+        _record_history(
+            db, req_no=req_no, action="auto_start_training",
+            actor="system", note="approve 後自動排入訓練",
+        )
+        db.commit()
+        background_tasks.add_task(_handle_start_training_resource_bg, req_no, SessionLocal)
+
     await notify_event(action, obj, actor=actor, note=payload.note)
 
     return {
@@ -277,3 +297,125 @@ async def perform_action(
         "action": action,
         "status": obj.status,
     }
+
+
+# ---------------------------------------------------------------------------
+# Sprint 15 P1-3: 訓練資源自動派發
+# ---------------------------------------------------------------------------
+
+def _handle_start_training_resource(obj: Submission, db: Session) -> None:
+    """
+    start_training 觸發時決定訓練資源：
+    1. 呼叫 ResourceProber.get_best_resource()
+    2. 若 resource=kaggle 且 has_kaggle_kernel(req_no) → KaggleLauncher.push_and_attach
+    3. 否則 fallback local（SSH P2 之後實作）
+    記錄 training_resource 到 submission，history note 寫入使用資源。
+    """
+    try:
+        from resources.prober import ResourceProber
+        from resources.kernel_registry import has_kaggle_kernel
+        from resources.kaggle_launcher import KaggleLauncher
+
+        prober = ResourceProber()
+        best = prober.get_best_resource(db=db)
+        resource = best.get("resource", "local")
+        device = best.get("device", "cpu")
+
+        if resource == "kaggle" and has_kaggle_kernel(obj.req_no):
+            launcher = KaggleLauncher()
+            success = launcher.push_and_attach(obj.req_no, db, obj)
+            if success:
+                obj.training_resource = "kaggle"
+                _logger.info("start_training req=%s dispatched to Kaggle", obj.req_no)
+                _record_history(
+                    db, req_no=obj.req_no, action="resource_selected",
+                    actor="system",
+                    note=f"使用資源：kaggle（kernel={obj.kaggle_kernel_slug}）",
+                    meta={"resource": "kaggle", "device": "cuda"},
+                )
+                return
+            else:
+                _logger.warning("KaggleLauncher.push_and_attach failed for req=%s, fallback local", obj.req_no)
+
+        # P0-2: fallback local 前檢查 DISABLE_LOCAL_TRAINING
+        if DISABLE_LOCAL_TRAINING:
+            obj.status = "blocked"
+            obj.blocked_reason = "無可用線上 GPU 資源（Kaggle 配額耗盡或無 kernel），本機訓練已停用"
+            db.commit()
+            _logger.warning("start_training req=%s blocked: no online GPU, local training disabled", obj.req_no)
+            from notifications import notify_event as _notify_event
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(_notify_event("training_blocked", obj, note="no_online_resource"))
+                else:
+                    loop.run_until_complete(_notify_event("training_blocked", obj, note="no_online_resource"))
+            except Exception:
+                pass
+            return
+
+        # fallback: local_mps 或 ssh（SSH launcher 在 P2 之後實作）
+        if resource == "ssh":
+            host = best.get("host", "unknown")
+            obj.training_resource = f"ssh@{host}"
+            note = f"使用資源：ssh@{host}（device=cuda）"
+        else:
+            local_device = device if device else "cpu"
+            obj.training_resource = f"local_{local_device}"
+            note = f"使用資源：local_{local_device}"
+
+        _logger.info("start_training req=%s resource=%s", obj.req_no, obj.training_resource)
+        _record_history(
+            db, req_no=obj.req_no, action="resource_selected",
+            actor="system",
+            note=note,
+            meta={"resource": resource, "device": device},
+        )
+
+    except Exception as e:
+        _logger.warning("_handle_start_training_resource failed for req=%s: %s", obj.req_no, e)
+        # 不中斷主流程，training_resource 留 None
+
+
+# ---------------------------------------------------------------------------
+# P0-1: approve → auto start_training 背景任務（不依賴 request scope db）
+# ---------------------------------------------------------------------------
+
+def _handle_start_training_resource_bg(req_no: str, db_session_factory) -> None:
+    """
+    背景任務版本：approve 後自動將 submission 推進到 training 狀態並派發資源。
+    使用獨立 db session，不依賴 request scope。
+    """
+    db: Session = db_session_factory()
+    try:
+        obj = db.query(Submission).filter(Submission.req_no == req_no).first()
+        if not obj:
+            _logger.error("auto_start_training: submission %s not found", req_no)
+            return
+        if obj.status != "approved":
+            _logger.warning(
+                "auto_start_training: submission %s status=%s (expected approved), skip",
+                req_no, obj.status,
+            )
+            return
+
+        now = __import__("datetime").datetime.utcnow()
+        obj.status = "training"
+        obj.training_started_at = now
+        obj.total_attempts = (obj.total_attempts or 0) + 1
+
+        _record_history(
+            db, req_no=req_no, action="start_training",
+            actor="system", note="auto-triggered by approve",
+        )
+        db.commit()
+        db.refresh(obj)
+
+        _handle_start_training_resource(obj, db)
+        _logger.info("auto_start_training completed for req=%s", req_no)
+
+    except Exception as e:
+        _logger.exception("auto_start_training failed for req=%s: %s", req_no, e)
+    finally:
+        db.close()
