@@ -12,6 +12,7 @@ const NAV = [
   { to: '/stats',          label: '統計' },
   { to: '/admin/api-keys', label: 'API Keys' },
   { to: '/predict',        label: '推論測試' },
+  { to: '/queue',          label: '訓練隊列' },
 ]
 
 export default function Layout({ children }: { children: React.ReactNode }) {

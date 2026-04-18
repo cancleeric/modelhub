@@ -353,6 +353,76 @@ def _process_submission(
                 pass
 
 
+def _check_lightning_quota_warning(db: Session) -> None:
+    """
+    Sprint 22 Task 22-4: Lightning 配額預警。
+    本月剩餘 < 3h 且過去 1 小時沒發過時，寫 history + notify CTO。
+    """
+    QUOTA_WARN_THRESHOLD = float(os.environ.get("LIGHTNING_QUOTA_WARN_HOURS", "3"))
+    try:
+        from resources.prober import LightningQuotaTracker
+        tracker = LightningQuotaTracker()
+        remaining = tracker.get_remaining_hours(db)
+        if remaining >= QUOTA_WARN_THRESHOLD:
+            return
+
+        # 1 小時節流
+        from datetime import timedelta as _td
+        cutoff = datetime.utcnow() - _td(hours=1)
+        already = (
+            db.query(Submission)
+            .join(
+                __import__("models", fromlist=["SubmissionHistory"]).SubmissionHistory,
+                __import__("models", fromlist=["SubmissionHistory"]).SubmissionHistory.req_no == "__quota_lightning__",
+            )
+            .first()
+        )
+        # 用 SubmissionHistory 做節流記錄（簡化版：直接查）
+        from models import SubmissionHistory
+        already_sent = (
+            db.query(SubmissionHistory)
+            .filter(
+                SubmissionHistory.req_no == "__quota_lightning__",
+                SubmissionHistory.action == "lightning_quota_warning",
+                SubmissionHistory.created_at >= cutoff,
+            )
+            .first()
+        )
+        if already_sent:
+            return
+
+        row = SubmissionHistory(
+            req_no="__quota_lightning__",
+            action="lightning_quota_warning",
+            actor="lightning-poller",
+            note=f"本月剩餘配額 {remaining:.1f}h（低於 {QUOTA_WARN_THRESHOLD}h 閾值）",
+            meta=json.dumps({"remaining_hours": remaining, "threshold": QUOTA_WARN_THRESHOLD}),
+        )
+        db.add(row)
+        db.commit()
+
+        from notifications import notify, CTO_TARGET
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(notify(
+                    CTO_TARGET,
+                    f"[ModelHub] Lightning 配額預警：本月剩餘 {remaining:.1f} 小時，"
+                    f"低於 {QUOTA_WARN_THRESHOLD}h 閾值。",
+                ))
+            else:
+                loop.run_until_complete(notify(
+                    CTO_TARGET,
+                    f"[ModelHub] Lightning 配額預警：本月剩餘 {remaining:.1f} 小時。",
+                ))
+        except Exception:
+            pass
+        logger.warning("Lightning quota warning sent: remaining=%.1fh", remaining)
+    except Exception as e:
+        logger.warning("_check_lightning_quota_warning failed: %s", e)
+
+
 def poll_once() -> dict:
     """
     掃一輪 platform=lightning 且 status=training 的 submission（同步，供 APScheduler 呼叫）。
@@ -367,6 +437,9 @@ def poll_once() -> dict:
 
     db: Session = SessionLocal()
     try:
+        # Sprint 22 Task 22-4: 每次 poll 時檢查 Lightning 配額預警
+        _check_lightning_quota_warning(db)
+
         rows = (
             db.query(Submission)
             .filter(

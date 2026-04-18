@@ -141,6 +141,22 @@ class ApiKey(Base):
     disabled = Column(Boolean, default=False)
 
 
+class TrainingQueue(Base):
+    """持久化訓練隊列 — Sprint 20"""
+
+    __tablename__ = "training_queue"
+
+    id = Column(Integer, primary_key=True, index=True)
+    req_no = Column(String, unique=True, index=True, nullable=False)  # FK→submissions.req_no
+    priority = Column(String, nullable=False, default="P2")           # P0/P1/P2/P3
+    status = Column(String, nullable=False, default="waiting")        # waiting/dispatching/running/done/failed
+    enqueued_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    dispatched_at = Column(DateTime, nullable=True)
+    target_resource = Column(String, nullable=True)                   # kaggle/lightning/ssh/local
+    retry_count = Column(Integer, default=0)
+    error_reason = Column(String, nullable=True)
+
+
 class SubmissionHistory(Base):
     """審核軌跡（append-only）— Sprint 2"""
 
@@ -190,6 +206,7 @@ _MIGRATIONS = [
     ("submissions", "training_resource",        "VARCHAR"),
     # Sprint 17 P1-4: Lightning Studio 名稱
     ("submissions", "lightning_studio_name",    "VARCHAR"),
+    # Sprint 20: 訓練隊列（SQLite 用 create_all 建表，此列僅佔位確保 migration 完整性）
 ]
 
 

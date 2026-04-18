@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
+import ResourceHealthWidget from '../components/ResourceHealthWidget'
 import {
   LineChart,
   Line,
@@ -211,10 +212,8 @@ export default function StatsPage() {
     <div>
       <h1 className="text-2xl font-bold text-gray-900 mb-6">統計儀表板</h1>
 
-      {/* Sprint 19 E.2: 系統狀態健康卡 */}
-      {systemStatus && (
-        <SystemStatusCard status={systemStatus} />
-      )}
+      {/* Sprint 24: ResourceHealthWidget（取代 SystemStatusCard，更豐富的健康狀態）*/}
+      <ResourceHealthWidget />
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
         <KpiCard label="本月新增" value={stats.monthSubs} sub="needs submitted" tone="indigo" />

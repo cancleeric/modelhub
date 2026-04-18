@@ -283,16 +283,25 @@ async def perform_action(
     db.commit()
     db.refresh(obj)
 
-    # P0-1 + P1-1: approve 後自動觸發 start_training（背景執行）
-    # 先設 kaggle_status="queued" 讓前端知道在排隊
+    # Sprint 20 Task 20-3: approve 後入持久化訓練隊列（移除直接 background_tasks 派發）
     if action == "approve":
+        from queue_manager import QueueManager
         obj.kaggle_status = "queued"
         _record_history(
-            db, req_no=req_no, action="auto_start_training",
-            actor="system", note="approve 後自動排入訓練",
+            db, req_no=req_no, action="enqueued",
+            actor="system", note="approve 後自動排入訓練隊列",
         )
         db.commit()
-        background_tasks.add_task(_handle_start_training_resource_bg, req_no, SessionLocal)
+        # 在 commit 後入隊，確保 session 狀態乾淨
+        queue_db = SessionLocal()
+        try:
+            QueueManager.enqueue(queue_db, req_no, priority=obj.priority or "P2")
+            queue_db.commit()
+            _logger.info("approve: req=%s enqueued to training queue", req_no)
+        except Exception as _qe:
+            _logger.exception("approve: failed to enqueue req=%s: %s", req_no, _qe)
+        finally:
+            queue_db.close()
 
     # Auto-approve 模式：submit 後若 validator pass 且 dataset 就緒，自動 approve
     if action == "submit" and AUTO_APPROVE_AFTER_VALIDATOR:
@@ -384,9 +393,14 @@ def _auto_approve_if_valid_bg(req_no: str, db_session_factory) -> None:
         db.commit()
         db.refresh(obj)
 
-        # 觸發訓練
-        _handle_start_training_resource_bg(req_no, db_session_factory)
-        _logger.info("auto_approve: submission %s approved and training dispatched", req_no)
+        # Sprint 20: 改為入持久化隊列，由 queue_dispatcher 統一派發
+        from queue_manager import QueueManager
+        try:
+            QueueManager.enqueue(db, req_no, priority=obj.priority or "P2")
+            db.commit()
+            _logger.info("auto_approve: submission %s enqueued to training queue", req_no)
+        except Exception as _qe:
+            _logger.exception("auto_approve: failed to enqueue req=%s: %s", req_no, _qe)
 
     except Exception as e:
         _logger.exception("auto_approve failed for req=%s: %s", req_no, e)
@@ -480,11 +494,44 @@ def _handle_start_training_resource(obj: Submission, db: Session) -> None:
                 pass
             return
 
-        # fallback: local_mps 或 ssh（SSH launcher 在 P2 之後實作）
+        # Sprint 23 Task 23-2: SSH 分支實際呼叫 SSHLauncher
         if resource == "ssh":
             host = best.get("host", "unknown")
-            obj.training_resource = f"ssh@{host}"
-            note = f"使用資源：ssh@{host}（device=cuda）"
+            try:
+                from resources.ssh_launcher import SSHLauncher
+                dataset_path = getattr(obj, "dataset_path", None) or ""
+                ssh_launcher = SSHLauncher()
+                ssh_result = ssh_launcher.submit_job(
+                    host=host,
+                    req_no=obj.req_no,
+                    dataset_path=dataset_path,
+                    config=None,
+                )
+                if ssh_result.get("success"):
+                    obj.training_resource = f"ssh@{host}"
+                    note = f"使用資源：ssh@{host}（device=cuda）"
+                    _logger.info("start_training req=%s dispatched to SSH host=%s", obj.req_no, host)
+                    _record_history(
+                        db, req_no=obj.req_no, action="resource_selected",
+                        actor="system",
+                        note=note,
+                        meta={"resource": "ssh", "device": "cuda", "host": host,
+                              "pid": ssh_result.get("pid")},
+                    )
+                    return
+                else:
+                    _logger.warning(
+                        "SSHLauncher.submit_job failed for req=%s host=%s: %s, fallback local",
+                        obj.req_no, host, ssh_result.get("reason"),
+                    )
+                    # fallthrough 到 local
+            except Exception as _se:
+                _logger.warning("SSHLauncher exception for req=%s: %s, fallback local", obj.req_no, _se)
+            # SSH 失敗後 fallback 到 local
+            local_result = ResourceProber().probe_local_mps()
+            local_device = local_result.get("device", "cpu")
+            obj.training_resource = f"local_{local_device}"
+            note = f"SSH 失敗後 fallback：local_{local_device}"
         else:
             local_device = device if device else "cpu"
             obj.training_resource = f"local_{local_device}"

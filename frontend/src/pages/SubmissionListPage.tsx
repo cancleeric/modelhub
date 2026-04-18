@@ -1,8 +1,30 @@
 import { useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { submissionsApi } from '../api/client'
+import { submissionsApi, api } from '../api/client'
 import StatusBadge from '../components/StatusBadge'
+
+interface QueueWaitingItem {
+  req_no: string
+  priority: string
+  position: number
+  enqueued_at: string
+}
+
+interface QueueRunningItem {
+  req_no: string
+  target_resource: string | null
+  dispatched_at: string | null
+  status: string
+}
+
+interface QueueStatus {
+  waiting: QueueWaitingItem[]
+  running: QueueRunningItem[]
+  max_concurrent: number
+  count_waiting: number
+  count_running: number
+}
 
 const STATUS_OPTIONS = [
   '', 'draft', 'submitted', 'approved', 'rejected',
@@ -82,6 +104,13 @@ export default function SubmissionListPage() {
     const totalCost = allData.reduce((acc, s) => acc + (s.estimated_cost_usd || 0), 0)
     return { pending, training, approvedThisWeek, totalGpuHours, totalCost }
   }, [allData])
+
+  // 訓練隊列狀態（每 30 秒 refresh）
+  const { data: queueStatus } = useQuery<QueueStatus>({
+    queryKey: ['queue-status'],
+    queryFn: () => api.get<QueueStatus>('/api/queue/status').then((r) => r.data),
+    refetchInterval: 30000,
+  })
 
   // Priority filter applied on frontend
   const filteredData = useMemo(() => {
@@ -227,6 +256,28 @@ export default function SubmissionListPage() {
                           title="訓練中"
                         />
                       )}
+                      {s.status === 'approved' && queueStatus && (() => {
+                        const waitingEntry = queueStatus.waiting.find((w) => w.req_no === s.req_no)
+                        const runningEntry = queueStatus.running.find((r) => r.req_no === s.req_no)
+                        if (waitingEntry) {
+                          return (
+                            <span
+                              className="text-xs font-medium px-1.5 py-0.5 rounded bg-orange-100 text-orange-700"
+                              title={`排隊中，優先度 ${waitingEntry.priority}`}
+                            >
+                              排隊中 #{waitingEntry.position}
+                            </span>
+                          )
+                        }
+                        if (runningEntry) {
+                          return (
+                            <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">
+                              派發中
+                            </span>
+                          )
+                        }
+                        return null
+                      })()}
                     </span>
                   </td>
                   <td className="px-4 py-3">

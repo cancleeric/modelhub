@@ -3,10 +3,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
-from routers import submissions, registry, actions, kaggle, api_keys, predict, health, inference
+from routers import submissions, registry, actions, kaggle, api_keys, predict, health, inference, queue as queue_router
 from models import init_db
 from pollers.kaggle_poller import start_scheduler, stop_scheduler
 import pollers.lightning_poller as _lightning_poller
+import pollers.queue_dispatcher as _queue_dispatcher
+import pollers.health_checker as _health_checker
+import pollers.ssh_poller as _ssh_poller
 from version import VERSION, BUILD_INFO
 
 logging.basicConfig(
@@ -20,6 +23,9 @@ async def lifespan(app: FastAPI):
     init_db()
     scheduler = start_scheduler()
     lightning_scheduler = _lightning_poller.start_scheduler()
+    queue_dispatcher_scheduler = _queue_dispatcher.start_scheduler()
+    health_checker_scheduler = _health_checker.start_scheduler()
+    ssh_poller_scheduler = _ssh_poller.start_scheduler()
     try:
         yield
     finally:
@@ -27,6 +33,12 @@ async def lifespan(app: FastAPI):
             stop_scheduler()
         if lightning_scheduler:
             _lightning_poller.stop_scheduler()
+        if queue_dispatcher_scheduler:
+            _queue_dispatcher.stop_scheduler()
+        if health_checker_scheduler:
+            _health_checker.stop_scheduler()
+        if ssh_poller_scheduler:
+            _ssh_poller.stop_scheduler()
 
 
 app = FastAPI(title="ModelHub", version=VERSION, lifespan=lifespan)
@@ -49,6 +61,7 @@ app.include_router(api_keys.router, prefix="/api/admin/api-keys", tags=["admin"]
 app.include_router(predict.router, prefix="/api/predict", tags=["predict"])
 app.include_router(health.router, prefix="/api/health", tags=["health"])
 app.include_router(inference.router, prefix="/v1", tags=["inference"])
+app.include_router(queue_router.router, prefix="/api/queue", tags=["queue"])
 
 
 @app.get("/health")

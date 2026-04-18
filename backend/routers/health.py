@@ -1,8 +1,9 @@
 """
-routers/health.py — 資源健康查詢（Sprint 16 P2-2 / Sprint 17 P2-3）
+routers/health.py — 資源健康查詢（Sprint 16 P2-2 / Sprint 17 P2-3 / Sprint 21 Task 21-2）
 """
 
 from datetime import datetime, timedelta
+from typing import Optional
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
@@ -192,6 +193,59 @@ def system_status(
     except Exception:
         pass
 
+    # Sprint 21 Task 21-2: 隊列狀態
+    queue_status: dict = {}
+    try:
+        from queue_manager import QueueManager
+        waiting_count = len(QueueManager.get_all_waiting(db))
+        running_count = QueueManager.count_running(db)
+        queue_status = {"waiting_count": waiting_count, "running_count": running_count}
+    except Exception:
+        pass
+
+    # Sprint 21 Task 21-2: poller 健康判斷（ok/warning/critical）
+    def _poller_health(last_at: Optional[datetime], warn_min: int, crit_min: int) -> str:
+        if last_at is None:
+            return "critical"
+        elapsed_min = (datetime.utcnow() - last_at).total_seconds() / 60
+        if elapsed_min >= crit_min:
+            return "critical"
+        if elapsed_min >= warn_min:
+            return "warning"
+        return "ok"
+
+    poller_health = {
+        "kaggle": _poller_health(kaggle_last_at, warn_min=5, crit_min=15),
+        "lightning": _poller_health(lightning_last_at, warn_min=15, crit_min=30),
+    }
+
+    # Sprint 21 Task 21-2: 近 24h 訓練成功率
+    success_rate_24h: Optional[float] = None
+    try:
+        from models import SubmissionHistory
+        since_24h = datetime.utcnow() - timedelta(hours=24)
+        completed_24h = (
+            db.query(SubmissionHistory)
+            .filter(
+                SubmissionHistory.action == "training_complete",
+                SubmissionHistory.created_at >= since_24h,
+            )
+            .count()
+        )
+        failed_24h = (
+            db.query(SubmissionHistory)
+            .filter(
+                SubmissionHistory.action == "training_failed",
+                SubmissionHistory.created_at >= since_24h,
+            )
+            .count()
+        )
+        total_24h = completed_24h + failed_24h
+        if total_24h > 0:
+            success_rate_24h = round(completed_24h / total_24h * 100, 1)
+    except Exception:
+        pass
+
     return {
         "kaggle_remaining_hours": kaggle_remaining,
         "lightning_remaining_hours": lightning_remaining,
@@ -199,6 +253,9 @@ def system_status(
         "lightning_poller_last_at": lightning_last_at.isoformat() + "Z" if lightning_last_at else None,
         "api_server": "ok",
         "active_trainings": active_trainings,
+        "queue_status": queue_status,
+        "poller_health": poller_health,
+        "success_rate_24h": success_rate_24h,
     }
 
 

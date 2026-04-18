@@ -14,6 +14,7 @@ import AcceptanceQueuePage from './pages/AcceptanceQueuePage'
 import StatsPage from './pages/StatsPage'
 import ApiKeyPage from './pages/ApiKeyPage'
 import PredictPage from './pages/PredictPage'
+import QueuePage from './pages/QueuePage'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -51,6 +52,7 @@ export default function App() {
                     <Route path="/stats" element={<StatsPage />} />
                     <Route path="/admin/api-keys" element={<ApiKeyPage />} />
                     <Route path="/predict" element={<PredictPage />} />
+                    <Route path="/queue" element={<QueuePage />} />
                   </Routes>
                 </Layout>
               </ProtectedRoute>

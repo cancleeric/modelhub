@@ -60,6 +60,40 @@ class KaggleQuotaTracker:
         return (used + estimated_hours) <= self.WEEKLY_LIMIT_HOURS
 
 
+class LightningQuotaTracker:
+    """Sprint 22 Task 22-2: 追蹤 Lightning AI 免費配額用量（22hr/月）"""
+
+    MONTHLY_LIMIT_HOURS = 22
+
+    def get_used_hours_this_month(self, db) -> float:
+        """查本月所有 Lightning 訓練的 gpu_seconds 總和 / 3600"""
+        from models import Submission
+        today = datetime.utcnow()
+        month_start = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+        rows = (
+            db.query(Submission)
+            .filter(
+                Submission.training_resource == "lightning",
+                Submission.training_started_at >= month_start,
+                Submission.gpu_seconds.isnot(None),
+            )
+            .all()
+        )
+        total_seconds = sum(r.gpu_seconds for r in rows if r.gpu_seconds)
+        return total_seconds / 3600.0
+
+    def get_remaining_hours(self, db) -> float:
+        """本月剩餘配額（小時）"""
+        used = self.get_used_hours_this_month(db)
+        return max(0.0, self.MONTHLY_LIMIT_HOURS - used)
+
+    def is_quota_available(self, db, estimated_hours: float = 2.0) -> bool:
+        """used + estimated <= MONTHLY_LIMIT_HOURS"""
+        used = self.get_used_hours_this_month(db)
+        return (used + estimated_hours) <= self.MONTHLY_LIMIT_HOURS
+
+
 class ResourceProber:
     """Sprint 15 P1-1: 訓練資源探測器"""
 
@@ -171,12 +205,13 @@ class ResourceProber:
         except Exception as e:
             return {"available": False, "reason": str(e), "host": host}
 
-    def probe_lightning(self) -> dict:
+    def probe_lightning(self, db=None) -> dict:
         """
         P2-1: 檢查 Lightning AI 是否可用。
         使用 lightning_sdk 真正驗證 credentials：
         1. LIGHTNING_USER_ID + LIGHTNING_API_KEY env 是否皆已設
         2. 以 SDK 向 Lightning AI API 取得 Teamspace 清單，確認連線與帳號有效
+        3. Sprint 22: 若有 db，整合 quota check（配額耗盡時回傳 available: False）
         """
         user_id = os.environ.get("LIGHTNING_USER_ID", "")
         api_key = os.environ.get("LIGHTNING_API_KEY", "")
@@ -206,6 +241,20 @@ class ResourceProber:
                 }
 
             teamspace_name = teamspaces[0].name if hasattr(teamspaces[0], "name") else str(teamspaces[0])
+
+            # Sprint 22: quota check
+            if db is not None:
+                try:
+                    quota_tracker = LightningQuotaTracker()
+                    if not quota_tracker.is_quota_available(db):
+                        used = quota_tracker.get_used_hours_this_month(db)
+                        return {
+                            "available": False,
+                            "reason": f"Lightning monthly quota exhausted ({used:.1f}h / {LightningQuotaTracker.MONTHLY_LIMIT_HOURS}h used)",
+                        }
+                except Exception as qe:
+                    logger.warning("Lightning quota check failed: %s", qe)
+
             return {
                 "available": True,
                 "reason": f"Lightning AI SDK connected (user={username}, teamspace={teamspace_name})",
@@ -244,7 +293,7 @@ class ResourceProber:
         logger.info("Kaggle not available: %s", kaggle_result.get("reason"))
 
         # 2. Lightning AI
-        lightning_result = self.probe_lightning()
+        lightning_result = self.probe_lightning(db=db)
         if lightning_result["available"]:
             return {
                 "resource": "lightning",

@@ -1,5 +1,42 @@
 # Changelog — ModelHub
 
+## [0.6.0] — 2026-04-18 (Sprint 20-24)
+
+### Sprint 20 — 持久化訓練隊列（P0）
+- **Task 20-1**：`models.py` 新增 `TrainingQueue` 資料表（id/req_no/priority/status/enqueued_at/dispatched_at/target_resource/retry_count/error_reason）
+- **Task 20-1**：新增 `alembic/versions/0002_training_queue.py` migration（PostgreSQL）
+- **Task 20-2**：新建 `backend/queue_manager.py`（enqueue/peek_next/mark_dispatching/mark_running/mark_done/mark_failed/count_running/get_queue_position）
+- **Task 20-3**：`routers/actions.py` approve 段改為呼叫 `QueueManager.enqueue()`，移除直接 `background_tasks.add_task` 派發
+- **Task 20-4**：新建 `pollers/queue_dispatcher.py`（每 30 秒，MAX_CONCURRENT=2），加入 main.py lifespan
+- **Task 20-5**：新增 `GET /api/queue/status` endpoint（routers/queue.py），回傳 waiting/running 清單
+
+### Sprint 21 — 定時健康檢查（P0）
+- **Task 21-1**：新建 `pollers/health_checker.py`（每 10 分鐘，6 種警告類型，1 小時節流），加入 main.py lifespan
+- **Task 21-2**：`routers/health.py` `/api/health/system-status` 擴充 queue_status/poller_health/success_rate_24h
+- **Task 21-3**：`health_checker.py` 新增 `send_daily_report()`，APScheduler cron 08:00 Asia/Taipei 每日發送
+
+### Sprint 22 — Lightning 完整實作（P0）
+- **Task 22-1**：`_normalize_status()` 完整確認，新建 `tests/test_lightning_status_mapping.py`（19 測試全過）
+- **Task 22-2**：`resources/prober.py` 新增 `LightningQuotaTracker`（get_used_hours_this_month/get_remaining_hours/is_quota_available），整合到 `probe_lightning()`（配額耗盡時回傳 available: False）
+- **Task 22-3**：新建 `tests/test_lightning_e2e.py`（19 測試全過，mock SDK）
+- **Task 22-4**：`lightning_poller.py` poll_once() 加入 `_check_lightning_quota_warning()`
+
+### Sprint 23 — SSH 訓練啟動器（P1）
+- **Task 23-1**：新建 `resources/ssh_launcher.py`（submit_job/get_job_status/download_output，nohup + job.pid + job.done/job.failed 機制）
+- **Task 23-2**：`routers/actions.py` SSH 分支實際呼叫 `SSHLauncher.submit_job()`，失敗時 fallback local
+- **Task 23-3**：新建 `pollers/ssh_poller.py`（120s，complete/error/overtime 處理，queue 狀態同步），加入 main.py lifespan
+
+### Sprint 24 — 前端整合（P1）
+- **Task 24-1**：`SubmissionListPage.tsx` status=approved 顯示「排隊中 #N」/「派發中」，呼叫 `GET /api/queue/status`（30s refresh）
+- **Task 24-2**：新建 `components/ResourceHealthWidget.tsx`（60s refresh，Kaggle/Lightning 配額進度條、任務數、poller 健康、24h 成功率），整合到 StatsPage
+- **Task 24-3**：新建 `pages/QueuePage.tsx`（waiting/running 清單，reviewer 可調整優先序），加入 App.tsx + Layout.tsx 導航
+
+### Sprint 25 QA
+- `pytest tests/ -v` — 38/38 通過
+- 版本號從 0.5.0 bump 到 0.6.0
+
+---
+
 ## [0.5.0] — 2026-04-17 (Sprint 8)
 
 ### 新增功能
