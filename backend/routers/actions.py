@@ -507,6 +507,98 @@ def _handle_start_training_resource(obj: Submission, db: Session) -> None:
 # P0-1: approve → auto start_training 背景任務（不依賴 request scope db）
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Sprint 19 C.2 + D: POST /api/submissions/{req_no}/retrain-lightning
+# ---------------------------------------------------------------------------
+
+class RetrainLightningRequest(BaseModel):
+    epochs: int = 100
+    arch: Optional[str] = None
+
+
+@router.post("/{req_no}/retrain-lightning")
+async def retrain_lightning(
+    req_no: str,
+    body: RetrainLightningRequest = RetrainLightningRequest(),
+    db: Session = Depends(get_db),
+    current_user: dict = CurrentUserOrApiKey,
+):
+    """
+    training_failed 後快速重送 Lightning AI GPU 重新訓練。
+    允許狀態：failed（training_failed）。
+    """
+    obj = db.query(Submission).filter(Submission.req_no == req_no).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    if obj.status != "failed":
+        raise HTTPException(
+            status_code=422,
+            detail=f"retrain-lightning requires status 'failed', current='{obj.status}'",
+        )
+
+    actor = (current_user or {}).get("preferred_username") or "unknown"
+    now = datetime.utcnow()
+
+    try:
+        from resources.lightning_launcher import LightningLauncher
+        dataset_path = getattr(obj, "dataset_path", None) or ""
+        config: dict = {"epochs": body.epochs}
+        if body.arch:
+            config["arch"] = body.arch
+
+        launcher = LightningLauncher()
+        result = launcher.submit_job(
+            req_no=obj.req_no,
+            dataset_path=dataset_path,
+            config=config,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"LightningLauncher.submit_job 例外: {e}",
+        )
+
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=503,
+            detail=f"Lightning 重送失敗: {result.get('reason', 'unknown')}",
+        )
+
+    studio_name = result.get("studio_name", "")
+    obj.training_resource = "lightning"
+    obj.status = "training"
+    obj.training_started_at = now
+    obj.total_attempts = (obj.total_attempts or 0) + 1
+    if studio_name:
+        obj.lightning_studio_name = studio_name
+    obj.kaggle_status = "queued"
+    obj.kaggle_status_updated_at = now
+
+    _record_history(
+        db,
+        req_no=req_no,
+        action="lightning_retrain_submitted",
+        actor=actor,
+        note=f"Lightning GPU 重送（studio={studio_name}, epochs={body.epochs}）",
+        meta={
+            "studio_name": studio_name,
+            "epochs": body.epochs,
+            "arch": body.arch or obj.arch,
+            "resource": "lightning",
+        },
+    )
+    db.commit()
+    db.refresh(obj)
+
+    return {
+        "req_no": req_no,
+        "action": "retrain_lightning",
+        "status": obj.status,
+        "studio_name": studio_name,
+        "epochs": body.epochs,
+    }
+
+
 def _handle_start_training_resource_bg(req_no: str, db_session_factory) -> None:
     """
     背景任務版本：approve 後自動將 submission 推進到 training 狀態並派發資源。

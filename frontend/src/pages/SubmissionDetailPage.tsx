@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { submissionsApi, registryApi, type Submission } from '../api/client'
+import { submissionsApi, registryApi, type Submission, type SubmissionHistoryItem } from '../api/client'
 import StatusBadge from '../components/StatusBadge'
 import RejectModal from '../components/RejectModal'
 
@@ -80,7 +80,8 @@ export default function SubmissionDetailPage() {
   const { data: history } = useQuery({
     queryKey: ['submission', 'history', req_no],
     queryFn: () => submissionsApi.history(req_no!),
-    enabled: !!req_no && tab === 'history',
+    // 總是 fetch（需要在 info tab 取 training_failed_summary）
+    enabled: !!req_no,
   })
 
   const actionMut = useMutation({
@@ -150,6 +151,22 @@ export default function SubmissionDetailPage() {
     },
   })
 
+  const retrainLightningMut = useMutation({
+    mutationFn: () => submissionsApi.retrainLightning(req_no!, { epochs: 100 }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['submission', req_no] })
+      qc.invalidateQueries({ queryKey: ['submissions'] })
+      qc.invalidateQueries({ queryKey: ['stats'] })
+      setActionError('')
+    },
+    onError: (err: unknown) => {
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+        'Lightning 重送失敗'
+      setActionError(String(msg))
+    },
+  })
+
   const attachMut = useMutation({
     mutationFn: ({ slug, version }: { slug: string; version?: number }) =>
       submissionsApi.attachKernel(req_no!, { slug, version }),
@@ -180,6 +197,12 @@ export default function SubmissionDetailPage() {
       qc.invalidateQueries({ queryKey: ['submission', req_no] })
     },
   })
+
+  // Sprint 19 C.3: 取 history 中最近一筆 training_failed_summary
+  const trainingFailedSummary: SubmissionHistoryItem | null =
+    history
+      ?.filter((h) => h.action === 'training_failed_summary')
+      .slice(-1)[0] ?? null
 
   if (isLoading) return <p className="text-gray-500">載入中...</p>
   if (!sub) return <p className="text-red-500">找不到需求單 {req_no}</p>
@@ -229,6 +252,41 @@ export default function SubmissionDetailPage() {
 
       {tab === 'info' && (
         <>
+          {/* Sprint 19 C.3: training_failed banner */}
+          {sub.status === 'failed' && (
+            <div className="bg-yellow-50 border border-yellow-400 rounded p-4 mb-4">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div>
+                  <h3 className="text-sm font-semibold text-yellow-800">
+                    訓練失敗 — 建議以 Lightning AI GPU 重新訓練（T4、100 epochs）
+                  </h3>
+                  {trainingFailedSummary?.meta?.partial_map50 != null ? (
+                    <p className="text-sm text-gray-700 mt-1">
+                      上次失敗紀錄 mAP50：
+                      <span className="font-mono font-semibold">
+                        {String(trainingFailedSummary.meta.partial_map50)}
+                      </span>
+                      {trainingFailedSummary.meta.epochs != null && (
+                        <span className="ml-2 text-gray-500">
+                          （完成 {String(trainingFailedSummary.meta.epochs)} epochs）
+                        </span>
+                      )}
+                    </p>
+                  ) : (
+                    <p className="text-sm text-gray-500 mt-1">無法取得上次失敗的 mAP50 紀錄。</p>
+                  )}
+                </div>
+                <button
+                  disabled={retrainLightningMut.isPending}
+                  onClick={() => retrainLightningMut.mutate()}
+                  className="px-4 py-2 text-sm bg-yellow-500 hover:bg-yellow-600 text-white rounded font-medium disabled:opacity-50"
+                >
+                  {retrainLightningMut.isPending ? '送出中...' : '快速重送 Lightning GPU'}
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* 退件 banner */}
           {sub.status === 'rejected' && rejectionReasons.length > 0 && (
             <div className="bg-yellow-50 border border-yellow-300 rounded p-4 mb-4">

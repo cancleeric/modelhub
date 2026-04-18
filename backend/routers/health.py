@@ -135,6 +135,73 @@ async def get_resource_quota(
     }
 
 
+@router.get("/system-status")
+def system_status(
+    db: Session = Depends(get_db),
+):
+    """
+    Sprint 19 E.1: Dashboard 系統健康狀態（不需 auth）。
+    回傳 Kaggle/Lightning 配額、poller 最後執行時間、進行中訓練數量。
+    """
+    from resources.prober import KaggleQuotaTracker
+    from models import Submission
+
+    # Kaggle 剩餘配額
+    kaggle_remaining: Optional[float] = None
+    try:
+        tracker = KaggleQuotaTracker()
+        used = tracker.get_used_hours_this_week(db)
+        kaggle_remaining = round(max(0.0, KaggleQuotaTracker.WEEKLY_LIMIT_HOURS - used), 2)
+    except Exception:
+        pass
+
+    # Lightning 剩餘配額（本月）
+    lightning_remaining: Optional[float] = None
+    try:
+        today = datetime.utcnow()
+        month_start = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        lightning_rows = (
+            db.query(Submission)
+            .filter(
+                Submission.training_resource == "lightning",
+                Submission.training_started_at >= month_start,
+                Submission.gpu_seconds.isnot(None),
+            )
+            .all()
+        )
+        used_sec = sum(r.gpu_seconds for r in lightning_rows if r.gpu_seconds)
+        used_h = used_sec / 3600.0
+        lightning_remaining = round(max(0.0, 22.0 - used_h), 2)
+    except Exception:
+        pass
+
+    # Poller 最後執行時間
+    from pollers.kaggle_poller import get_last_poll_at as kaggle_last_poll
+    from pollers.lightning_poller import get_last_poll_at as lightning_last_poll
+    kaggle_last_at = kaggle_last_poll()
+    lightning_last_at = lightning_last_poll()
+
+    # 進行中訓練數量
+    active_trainings = 0
+    try:
+        active_trainings = (
+            db.query(Submission)
+            .filter(Submission.status.in_(["training", "queued"]))
+            .count()
+        )
+    except Exception:
+        pass
+
+    return {
+        "kaggle_remaining_hours": kaggle_remaining,
+        "lightning_remaining_hours": lightning_remaining,
+        "kaggle_poller_last_at": kaggle_last_at.isoformat() + "Z" if kaggle_last_at else None,
+        "lightning_poller_last_at": lightning_last_at.isoformat() + "Z" if lightning_last_at else None,
+        "api_server": "ok",
+        "active_trainings": active_trainings,
+    }
+
+
 @router.get("/poll-stats")
 def poll_stats(
     db: Session = Depends(get_db),

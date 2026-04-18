@@ -153,6 +153,38 @@ def _append_history(db: Session, req_no: str, action: str, meta: Optional[dict] 
     db.add(row)
 
 
+def _append_training_failed_summary_lightning(db: Session, sub: "Submission") -> None:
+    """
+    Sprint 19 C.1: 解析已下載的 Lightning output（若有），寫入含 partial metrics 的
+    training_failed_summary history，供前端顯示上次失敗的 mAP50。
+    """
+    parsed_map50 = None
+    completed_epochs = None
+    try:
+        dest_dir = str(Path(LIGHTNING_DOWNLOAD_DIR) / str(sub.req_no))
+        from pollers.kaggle_poller import _read_log_files
+        log_text = _read_log_files(dest_dir)
+        if log_text:
+            parsed = parse_training_log(sub.arch or "yolov8m", log_text)
+            metrics = parsed.get("metrics", {}) or {}
+            parsed_map50 = metrics.get("map50")
+            completed_epochs = metrics.get("epochs")
+    except Exception as e:
+        logger.debug("_append_training_failed_summary_lightning parse failed: %s", e)
+
+    _append_history(
+        db,
+        req_no=sub.req_no,
+        action="training_failed_summary",
+        meta={
+            "partial_map50": parsed_map50,
+            "epochs": completed_epochs,
+            "verdict": "fail",
+        },
+        note=f"mAP50={parsed_map50 or 'N/A'}",
+    )
+
+
 def _process_submission(
     db: Session,
     submission: "Submission",
@@ -286,6 +318,10 @@ def _process_submission(
 
     elif status == "error":
         submission.status = "failed"
+
+        # Sprint 19 C.1: 寫入失敗摘要 history（供前端顯示上次失敗的 mAP50）
+        _append_training_failed_summary_lightning(db, submission)
+
         db.commit()
         import asyncio
         try:

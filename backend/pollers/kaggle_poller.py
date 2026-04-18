@@ -149,6 +149,11 @@ def _append_history(db: Session, req_no: str, action: str, meta: Optional[dict] 
 
 async def _on_kernel_complete(db: Session, sub: Submission) -> None:
     """complete → 下載 output → 解析 → 建 ModelVersion → status=trained"""
+    # 幂等 guard：若已是終態，直接跳過，避免重複建 ModelVersion
+    if sub.status in ("trained", "rejected", "accepted"):
+        logger.debug("_on_kernel_complete: req=%s status=%s already terminal, skip",
+                     sub.req_no, sub.status)
+        return
     if not sub.kaggle_kernel_slug:
         return
     dest = os.path.join(KAGGLE_DOWNLOAD_DIR, sub.req_no)
@@ -239,6 +244,38 @@ def _next_version_for(db: Session, req_no: str) -> str:
     return f"v{n}"
 
 
+def _append_training_failed_summary(db: Session, sub: Submission) -> None:
+    """
+    Sprint 19 C.1: 解析已下載的 output（若有），寫入含 partial metrics 的
+    training_failed_summary history，供前端顯示上次失敗的 mAP50。
+    """
+    parsed_map50 = None
+    completed_epochs = None
+    try:
+        dest = os.path.join(KAGGLE_DOWNLOAD_DIR, sub.req_no)
+        log_text = _read_log_files(dest)
+        if log_text:
+            parsed = parse_training_log(sub.arch or "yolov8m", log_text)
+            metrics = parsed.get("metrics", {}) or {}
+            parsed_map50 = metrics.get("map50")
+            completed_epochs = metrics.get("epochs")
+    except Exception as e:
+        logger.debug("_append_training_failed_summary parse failed: %s", e)
+
+    _append_history(
+        db,
+        req_no=sub.req_no,
+        action="training_failed_summary",
+        actor="kaggle-poller",
+        meta={
+            "partial_map50": parsed_map50,
+            "epochs": completed_epochs,
+            "verdict": "fail",
+        },
+        note=f"mAP50={parsed_map50 or 'N/A'}",
+    )
+
+
 async def _on_kernel_error(db: Session, sub: Submission, raw: str) -> None:
     now = datetime.utcnow()
     sub.kaggle_status = "error"
@@ -279,6 +316,11 @@ async def _on_kernel_error(db: Session, sub: Submission, raw: str) -> None:
         note=raw[:500] if raw else None,
         meta={"retry_count": retry_count, "max_retries": max_retries},
     )
+
+    # Sprint 19 C.1: 寫入失敗摘要 history（供前端顯示上次失敗的 mAP50）
+    # 嘗試從已下載的 output 解析 partial metrics
+    _append_training_failed_summary(db, sub)
+
     db.commit()
     await notify_event("training_failed", sub)
 
@@ -469,9 +511,13 @@ async def poll_once() -> dict:
                 )
                 db.commit()
 
+            # Sprint 19 B: complete 時強制觸發 _on_kernel_complete，
+            # 不管 kaggle_status 是否相同（幂等 guard 在 _on_kernel_complete 內）。
+            # 條件：new_status == "complete" 且 sub 尚未進入終態。
             if new_status == "complete":
                 summary["complete"] += 1
-                await _on_kernel_complete(db, sub)
+                if sub.status not in ("trained", "rejected", "accepted"):
+                    await _on_kernel_complete(db, sub)
             elif new_status == "error":
                 summary["error"] += 1
                 await _on_kernel_error(db, sub, raw)

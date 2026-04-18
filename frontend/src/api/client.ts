@@ -230,6 +230,9 @@ export const submissionsApi = {
 
   refreshLightning: (req_no: string) =>
     api.post(`/api/submissions/${req_no}/refresh-lightning`).then((r) => r.data),
+
+  retrainLightning: (req_no: string, payload?: { epochs?: number; arch?: string }) =>
+    api.post(`/api/submissions/${req_no}/retrain-lightning`, payload ?? {}).then((r) => r.data),
 }
 
 // --- Admin API (Sprint 7.1) ---
