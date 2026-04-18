@@ -14,14 +14,16 @@ import subprocess
 import time
 from pathlib import Path
 
-# Kaggle 環境安裝 ultralytics
+# Kaggle 環境安裝 ultralytics（不重裝 torch，避免崩潰）
 subprocess.check_call([
     sys.executable, "-m", "pip", "install", "-q", "ultralytics",
 ])
 
 import torch
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"[DEVICE] {DEVICE}", flush=True)
+
+DEVICE = "cpu"  # Kaggle GPU 環境相容性問題，先用 CPU 確保完成
+_using_gpu = False
+print("[DEVICE] CPU (forced - CUDA compatibility issue)", flush=True)
 
 REQ_NO = "MH-2026-008"
 CLASS_NAMES = [
@@ -45,7 +47,8 @@ RESULT_PATH = WORK_DIR / "result.json"
 
 YOLO_DIR = WORK_DIR / "dataset"
 SEED = 42
-EPOCHS = int(os.getenv("MH008_EPOCHS", "100"))
+# CPU 模式降 epochs 確保 Kaggle 12hr 內跑完
+EPOCHS = int(os.getenv("MH008_EPOCHS", "30"))
 IMGSZ = int(os.getenv("MH008_IMGSZ", "640"))
 PATIENCE = 20
 

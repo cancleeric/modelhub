@@ -1,6 +1,6 @@
 # MH-2026-006 Text Detection — YOLOv8m (Kaggle GPU 版)
 # 1-class text region detection
-# 資料集：/kaggle/input/aicad-text-detection/
+# 資料集：/kaggle/input/aicad-text-detection-yolo/
 # 目標：mAP50 >= 0.70（baseline >= 0.60）
 # 預估：< 2 hr on P100
 # Sprint 15 P1-1
@@ -13,14 +13,16 @@ import subprocess
 import time
 from pathlib import Path
 
-# Kaggle 環境安裝 ultralytics
+# Kaggle 環境安裝 ultralytics（不重裝 torch，避免崩潰）
 subprocess.check_call([
     sys.executable, "-m", "pip", "install", "-q", "ultralytics",
 ])
 
 import torch
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"[DEVICE] {DEVICE}", flush=True)
+
+DEVICE = "cpu"  # Kaggle GPU 環境相容性問題，先用 CPU 確保完成
+_using_gpu = False
+print("[DEVICE] CPU (forced - CUDA compatibility issue)", flush=True)
 
 REQ_NO = "MH-2026-006"
 CLASS_NAMES = ["text"]
@@ -30,8 +32,8 @@ NUM_CLASSES = 1
 # Kaggle datasets 掛載於 /kaggle/input/datasets/<owner>/<slug>/
 # 若不存在則 fallback 到 /kaggle/input/<slug>/（舊版路徑）
 _KAGGLE_DATA_CANDIDATES = [
-    Path("/kaggle/input/datasets/boardgamegroup/aicad-text-detection"),
-    Path("/kaggle/input/aicad-text-detection"),
+    Path("/kaggle/input/datasets/boardgamegroup/aicad-text-detection-yolo"),
+    Path("/kaggle/input/aicad-text-detection-yolo"),
 ]
 DATA_ROOT = next((p for p in _KAGGLE_DATA_CANDIDATES if p.exists()), _KAGGLE_DATA_CANDIDATES[0])
 WORK_DIR = Path("/kaggle/working")
@@ -40,7 +42,8 @@ RESULT_PATH = WORK_DIR / "result.json"
 
 YOLO_DIR = WORK_DIR / "dataset"
 SEED = 42
-EPOCHS = int(os.getenv("MH006_EPOCHS", "100"))
+# CPU 模式降 epochs 確保 Kaggle 12hr 內跑完
+EPOCHS = int(os.getenv("MH006_EPOCHS", "30"))
 IMGSZ = int(os.getenv("MH006_IMGSZ", "640"))
 PATIENCE = 20
 
