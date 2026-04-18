@@ -530,10 +530,10 @@ async def retrain_lightning(
     obj = db.query(Submission).filter(Submission.req_no == req_no).first()
     if not obj:
         raise HTTPException(status_code=404, detail="Submission not found")
-    if obj.status != "failed":
+    if obj.status not in ("failed", "training_failed"):
         raise HTTPException(
             status_code=422,
-            detail=f"retrain-lightning requires status 'failed', current='{obj.status}'",
+            detail=f"retrain-lightning requires status 'failed' or 'training_failed', current='{obj.status}'",
         )
 
     actor = (current_user or {}).get("preferred_username") or "unknown"
