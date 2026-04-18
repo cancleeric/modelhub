@@ -30,3 +30,8 @@ training/**/resume_run/
 
 # Kaggle credentials
 kaggle.json
+
+# 本機開發環境變數（不得 commit）
+.env
+.env.*
+*.env

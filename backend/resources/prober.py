@@ -174,36 +174,49 @@ class ResourceProber:
     def probe_lightning(self) -> dict:
         """
         P2-1: 檢查 Lightning AI 是否可用。
-        若 LIGHTNING_API_KEY 未設，直接回傳不可用。
-        若已設，嘗試執行 lightning status 確認連線。
+        使用 lightning_sdk 真正驗證 credentials：
+        1. LIGHTNING_USER_ID + LIGHTNING_API_KEY env 是否皆已設
+        2. 以 SDK 向 Lightning AI API 取得 Teamspace 清單，確認連線與帳號有效
         """
+        user_id = os.environ.get("LIGHTNING_USER_ID", "")
         api_key = os.environ.get("LIGHTNING_API_KEY", "")
-        if not api_key:
-            return {"available": False, "reason": "LIGHTNING_API_KEY not set"}
 
-        # 嘗試 lightning CLI ping（若有安裝）
-        lightning_cli = shutil.which("lightning")
-        if lightning_cli:
-            try:
-                result = subprocess.run(
-                    ["lightning", "status"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                )
-                if result.returncode == 0:
-                    return {"available": True, "reason": "lightning CLI ok"}
+        if not user_id or not api_key:
+            missing = []
+            if not user_id:
+                missing.append("LIGHTNING_USER_ID")
+            if not api_key:
+                missing.append("LIGHTNING_API_KEY")
+            return {
+                "available": False,
+                "reason": f"{', '.join(missing)} not set",
+            }
+
+        try:
+            from lightning_sdk import User
+
+            username = os.environ.get("LIGHTNING_USERNAME", "cancleeric")
+            u = User(name=username)
+            teamspaces = u.teamspaces  # 實際打 API，驗證 credentials 有效
+
+            if not teamspaces:
                 return {
                     "available": False,
-                    "reason": f"lightning CLI error: {result.stderr.strip()[:200]}",
+                    "reason": f"Lightning AI connected but no teamspace found for user={username}",
                 }
-            except subprocess.TimeoutExpired:
-                return {"available": False, "reason": "lightning CLI timeout (5s)"}
-            except Exception as e:
-                return {"available": False, "reason": str(e)}
 
-        # CLI 不在 PATH，但 API Key 已設 — 視為可用（SDK 模式）
-        return {"available": True, "reason": "LIGHTNING_API_KEY set (CLI not in PATH, SDK mode)"}
+            teamspace_name = teamspaces[0].name if hasattr(teamspaces[0], "name") else str(teamspaces[0])
+            return {
+                "available": True,
+                "reason": f"Lightning AI SDK connected (user={username}, teamspace={teamspace_name})",
+                "teamspace": teamspace_name,
+                "user": username,
+            }
+
+        except ImportError:
+            return {"available": False, "reason": "lightning_sdk not installed (pip install lightning-sdk)"}
+        except Exception as e:
+            return {"available": False, "reason": f"Lightning AI SDK error: {str(e)[:200]}"}
 
     def probe_local_mps(self) -> dict:
         """檢查本機 MPS（Apple Silicon）或 CPU fallback"""

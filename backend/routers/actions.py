@@ -335,7 +335,37 @@ def _handle_start_training_resource(obj: Submission, db: Session) -> None:
                 )
                 return
             else:
-                _logger.warning("KaggleLauncher.push_and_attach failed for req=%s, fallback local", obj.req_no)
+                _logger.warning("KaggleLauncher.push_and_attach failed for req=%s, fallback Lightning", obj.req_no)
+
+        # Sprint 15 P2-1: Kaggle 不可用時嘗試 Lightning AI
+        if resource == "lightning":
+            from resources.lightning_launcher import LightningLauncher
+            dataset_path = getattr(obj, "dataset_path", None) or ""
+            lightning = LightningLauncher()
+            result = lightning.submit_job(
+                req_no=obj.req_no,
+                dataset_path=dataset_path,
+                config=None,  # 使用預設訓練參數
+            )
+            if result.get("success"):
+                obj.training_resource = "lightning"
+                studio_name = result.get("studio_name", "")
+                _logger.info(
+                    "start_training req=%s dispatched to Lightning studio=%s",
+                    obj.req_no, studio_name,
+                )
+                _record_history(
+                    db, req_no=obj.req_no, action="resource_selected",
+                    actor="system",
+                    note=f"使用資源：lightning（studio={studio_name}）",
+                    meta={"resource": "lightning", "device": "cuda", "studio_name": studio_name},
+                )
+                return
+            else:
+                _logger.warning(
+                    "LightningLauncher.submit_job failed for req=%s: %s, fallback local",
+                    obj.req_no, result.get("reason"),
+                )
 
         # P0-2: fallback local 前檢查 DISABLE_LOCAL_TRAINING
         if DISABLE_LOCAL_TRAINING:

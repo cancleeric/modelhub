@@ -27,6 +27,13 @@ services:
       - DATABASE_URL=${DATABASE_URL:-}
       # Sprint 17 P0-2: 本機訓練已停用，強制走線上 GPU（Kaggle/Lightning）
       - DISABLE_LOCAL_TRAINING=true
+      # Lightning AI 憑證（Sprint 15 P2-1）
+      # 取得方式：hvault get hurricanecore/dev/LIGHTNING_USER_ID / LIGHTNING_API_KEY
+      # 啟動方式：hvault run --prefix "hurricanecore/dev/" -- docker-compose up
+      - LIGHTNING_USER_ID=${LIGHTNING_USER_ID:-}
+      - LIGHTNING_API_KEY=${LIGHTNING_API_KEY:-}
+      - LIGHTNING_USERNAME=${LIGHTNING_USERNAME:-cancleeric}
+      - LIGHTNING_TEAMSPACE=${LIGHTNING_TEAMSPACE:-default-teamspace}
     restart: unless-stopped
     networks:
       - squid_dev_network
