@@ -1,0 +1,14 @@
+{
+  "id": "boardgamegroup/mh-2026-007-line-segmentation",
+  "title": "MH-2026-007 Line Segmentation UNet",
+  "code_file": "train_line_segmentation.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": ["boardgamegroup/mh-2026-007-line-segmentation-dataset"],
+  "competition_sources": [],
+  "kernel_sources": [],
+  "req_no": "MH-2026-007"
+}
