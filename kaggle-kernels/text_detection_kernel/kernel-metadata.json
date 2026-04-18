@@ -1,0 +1,13 @@
+{
+  "id": "boardgamegroup/mh-2026-006-text-detection-yolov8",
+  "title": "MH-2026-006 Text Detection YOLOv8",
+  "code_file": "train_kaggle.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": ["boardgamegroup/aicad-text-detection"],
+  "competition_sources": [],
+  "kernel_sources": []
+}
