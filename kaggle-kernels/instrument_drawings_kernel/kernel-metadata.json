@@ -1,6 +1,6 @@
 {
-  "id": "boardgamegroup/mh-2026-005-instrument-drawings-yolov8s",
-  "title": "MH-2026-005 Instrument Drawings YOLOv8s",
+  "id": "boardgamegroup/mh-2026-005-instrument-drawings-yolov8m",
+  "title": "MH-2026-005 Instrument Drawings YOLOv8m",
   "code_file": "train_kaggle.py",
   "language": "python",
   "kernel_type": "script",
@@ -8,7 +8,7 @@
   "enable_gpu": true,
   "enable_internet": true,
   "dataset_sources": [
-    "TODO: boardgamegroup/aicad-instrument-drawings"
+    "boardgamegroup/aicad-instrument-drawings"
   ],
   "competition_sources": [],
   "kernel_sources": [],

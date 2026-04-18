@@ -14,16 +14,16 @@ import subprocess
 import time
 from pathlib import Path
 
-# Kaggle 環境安裝 ultralytics（不重裝 torch，避免崩潰）
+# 使用 Kaggle 預裝 torch（2.10+cu128，T4/P100 均支援），僅安裝 ultralytics
+# 不降 NumPy：Kaggle Python 3.12 環境 NumPy 2.x + torch 2.10 相容
 subprocess.check_call([
     sys.executable, "-m", "pip", "install", "-q", "ultralytics",
 ])
 
 import torch
-
-DEVICE = "cpu"  # Kaggle GPU 環境相容性問題，先用 CPU 確保完成
-_using_gpu = False
-print("[DEVICE] CPU (forced - CUDA compatibility issue)", flush=True)
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+_using_gpu = DEVICE == "cuda"
+print(f"[DEVICE] {DEVICE} (torch={torch.__version__})", flush=True)
 
 REQ_NO = "MH-2026-008"
 CLASS_NAMES = [
@@ -47,8 +47,7 @@ RESULT_PATH = WORK_DIR / "result.json"
 
 YOLO_DIR = WORK_DIR / "dataset"
 SEED = 42
-# CPU 模式降 epochs 確保 Kaggle 12hr 內跑完
-EPOCHS = int(os.getenv("MH008_EPOCHS", "30"))
+EPOCHS = int(os.getenv("MH008_EPOCHS", "100"))
 IMGSZ = int(os.getenv("MH008_IMGSZ", "640"))
 PATIENCE = 20
 
@@ -152,7 +151,7 @@ model.train(
     data=str(yaml_path),
     epochs=EPOCHS,
     imgsz=IMGSZ,
-    batch=8,        # m 模型記憶體需求較大
+    batch=16,
     device=DEVICE,
     project=str(OUT_DIR),
     name="yolo_run",
@@ -161,6 +160,10 @@ model.train(
     save=True,
     plots=True,
     verbose=True,
+    mosaic=1.0,
+    hsv_h=0.015,
+    hsv_s=0.7,
+    hsv_v=0.4,
 )
 train_seconds = int(time.time() - t_start)
 print(f"\n[DONE] train elapsed {train_seconds}s = {train_seconds/3600:.2f}h", flush=True)
@@ -189,17 +192,17 @@ try:
 except Exception as _pce:
     print(f"[WARN] per-class metrics 提取失敗: {_pce}", flush=True)
 
-if map50 >= 0.70:
-    verdict, tier = "pass", "達標"
-elif map50 >= 0.60:
-    verdict, tier = "baseline", "baseline 可交付"
+if map50 >= 0.88:
+    verdict, tier = "pass", "達目標 mAP50>=0.88"
+elif map50 >= 0.70:
+    verdict, tier = "baseline", "達 baseline mAP50>=0.70"
 else:
     verdict, tier = "fail", "未達 baseline"
 
 result = {
     "req_no": REQ_NO,
-    "run": "kaggle_v1",
-    "arch": "yolov8m",
+    "run": "kaggle_v2_cuda",
+    "arch": "yolov8s",
     "device": DEVICE,
     "epochs": EPOCHS,
     "imgsz": IMGSZ,
@@ -212,10 +215,11 @@ result = {
     "per_class_map50": per_class_map50,
     "verdict": verdict,
     "tier": tier,
-    "target": "mAP50 >= 0.70",
-    "baseline": "mAP50 >= 0.60",
+    "target": "mAP50 >= 0.88",
+    "baseline": "mAP50 >= 0.70",
     "classes": CLASS_NAMES,
     "best_path": str(best_pt),
+    "augmentation": {"mosaic": 1.0, "hsv_h": 0.015},
 }
 RESULT_PATH.write_text(json.dumps(result, ensure_ascii=False, indent=2))
 print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)

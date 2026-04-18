@@ -1,6 +1,6 @@
 {
-  "id": "boardgamegroup/mh-2026-009-engineering-ocr-trocr-small",
-  "title": "MH-2026-009 Engineering OCR TrOCR Small",
+  "id": "boardgamegroup/mh-2026-009-engineering-ocr-trocr-base",
+  "title": "MH-2026-009 Engineering OCR TrOCR Base",
   "code_file": "train_engineering_ocr.py",
   "language": "python",
   "kernel_type": "script",

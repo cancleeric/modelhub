@@ -7,7 +7,7 @@
   "is_private": true,
   "enable_gpu": true,
   "enable_internet": true,
-  "dataset_sources": ["boardgamegroup/aicad-text-detection"],
+  "dataset_sources": ["boardgamegroup/aicad-text-detection-yolo"],
   "competition_sources": [],
   "kernel_sources": [],
   "req_no": "MH-2026-006"
