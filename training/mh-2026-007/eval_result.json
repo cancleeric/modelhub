@@ -1,0 +1,11 @@
+{
+  "req_no": "MH-2026-007",
+  "method": "local_eval_kaggle_weights",
+  "device": "mps",
+  "weights": "/Users/yinghaowang/HurricaneCore/modelhub/weights/mh_2026_007_line_seg_best.pth",
+  "n_val": 160,
+  "miou": 0.9993,
+  "target": "mIoU >= 0.75",
+  "verdict": "pass",
+  "eval_seconds": 3
+}
