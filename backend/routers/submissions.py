@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
@@ -14,37 +14,47 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 # Pydantic schemas
 # ---------------------------------------------------------------------------
+# B-R2-3 / M-R2: field-level validation
+_PRIORITY_WHITELIST = {"P0", "P1", "P2", "P3"}
+
 
 class SubmissionCreate(BaseModel):
-    req_name: Optional[str] = None
-    product: str
-    company: str
-    submitter: Optional[str] = None
-    purpose: Optional[str] = None
-    priority: str = "P2"
-    model_type: Optional[str] = None
-    class_list: Optional[str] = None
-    map50_threshold: Optional[float] = None   # 舊欄位相容
-    map50_target: Optional[float] = None
-    map50_95_target: Optional[float] = None
-    inference_latency_ms: Optional[int] = None
-    model_size_limit_mb: Optional[int] = None
-    arch: Optional[str] = "yolov8m"
-    input_spec: Optional[str] = None
-    deploy_env: Optional[str] = None
-    dataset_source: Optional[str] = None
-    dataset_count: Optional[str] = None
-    dataset_val_count: Optional[int] = None
-    dataset_test_count: Optional[int] = None
-    class_count: Optional[int] = None
-    label_format: Optional[str] = None
-    kaggle_dataset_url: Optional[str] = None
-    dataset_path: Optional[str] = None
-    dataset_train_count: Optional[int] = None
-    expected_delivery: Optional[str] = None
+    req_name: Optional[str] = Field(default=None, max_length=200)
+    product: str = Field(..., min_length=1, max_length=100)
+    company: str = Field(..., min_length=1, max_length=100)
+    submitter: Optional[str] = Field(default=None, max_length=100)
+    purpose: Optional[str] = Field(default=None, max_length=2000)
+    priority: str = Field(default="P2")
+    model_type: Optional[str] = Field(default=None, max_length=50)
+    class_list: Optional[str] = Field(default=None, max_length=5000)
+    map50_threshold: Optional[float] = Field(default=None, ge=0.0, le=1.0)  # 舊欄位相容
+    map50_target: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    map50_95_target: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    inference_latency_ms: Optional[int] = Field(default=None, ge=0, le=600_000)
+    model_size_limit_mb: Optional[int] = Field(default=None, ge=0, le=10_000)
+    arch: Optional[str] = Field(default="yolov8m", max_length=50)
+    input_spec: Optional[str] = Field(default=None, max_length=200)
+    deploy_env: Optional[str] = Field(default=None, max_length=100)
+    dataset_source: Optional[str] = Field(default=None, max_length=500)
+    dataset_count: Optional[str] = Field(default=None, max_length=100)
+    dataset_val_count: Optional[int] = Field(default=None, ge=0)
+    dataset_test_count: Optional[int] = Field(default=None, ge=0)
+    class_count: Optional[int] = Field(default=None, ge=1, le=10_000)
+    label_format: Optional[str] = Field(default=None, max_length=50)
+    kaggle_dataset_url: Optional[str] = Field(default=None, max_length=500)
+    dataset_path: Optional[str] = Field(default=None, max_length=500)
+    dataset_train_count: Optional[int] = Field(default=None, ge=0)
+    expected_delivery: Optional[str] = Field(default=None, max_length=50)
     # Sprint 6
-    max_retries: Optional[int] = 2
-    max_budget_usd: Optional[float] = 5.0
+    max_retries: Optional[int] = Field(default=2, ge=0, le=10)
+    max_budget_usd: Optional[float] = Field(default=5.0, ge=0, le=1000)
+
+    @field_validator("priority")
+    @classmethod
+    def _priority_whitelist(cls, v: str) -> str:
+        if v not in _PRIORITY_WHITELIST:
+            raise ValueError(f"priority must be one of {sorted(_PRIORITY_WHITELIST)}")
+        return v
 
 
 class TrainingResultUpdate(BaseModel):
@@ -57,36 +67,45 @@ class TrainingResultUpdate(BaseModel):
 
 
 class SubmissionUpdate(BaseModel):
-    req_name: Optional[str] = None
-    product: Optional[str] = None
-    company: Optional[str] = None
-    submitter: Optional[str] = None
-    purpose: Optional[str] = None
+    req_name: Optional[str] = Field(default=None, max_length=200)
+    product: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    company: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    submitter: Optional[str] = Field(default=None, max_length=100)
+    purpose: Optional[str] = Field(default=None, max_length=2000)
     priority: Optional[str] = None
-    model_type: Optional[str] = None
-    class_list: Optional[str] = None
-    map50_threshold: Optional[float] = None
-    map50_target: Optional[float] = None
-    map50_95_target: Optional[float] = None
-    inference_latency_ms: Optional[int] = None
-    model_size_limit_mb: Optional[int] = None
-    arch: Optional[str] = None
-    input_spec: Optional[str] = None
-    deploy_env: Optional[str] = None
-    dataset_source: Optional[str] = None
-    dataset_count: Optional[str] = None
-    dataset_val_count: Optional[int] = None
-    dataset_test_count: Optional[int] = None
-    class_count: Optional[int] = None
-    label_format: Optional[str] = None
-    kaggle_dataset_url: Optional[str] = None
-    dataset_path: Optional[str] = None
-    dataset_train_count: Optional[int] = None
-    expected_delivery: Optional[str] = None
-    reviewer_note: Optional[str] = None
-    reviewed_by: Optional[str] = None
+    model_type: Optional[str] = Field(default=None, max_length=50)
+    class_list: Optional[str] = Field(default=None, max_length=5000)
+    map50_threshold: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    map50_target: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    map50_95_target: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    inference_latency_ms: Optional[int] = Field(default=None, ge=0, le=600_000)
+    model_size_limit_mb: Optional[int] = Field(default=None, ge=0, le=10_000)
+    arch: Optional[str] = Field(default=None, max_length=50)
+    input_spec: Optional[str] = Field(default=None, max_length=200)
+    deploy_env: Optional[str] = Field(default=None, max_length=100)
+    dataset_source: Optional[str] = Field(default=None, max_length=500)
+    dataset_count: Optional[str] = Field(default=None, max_length=100)
+    dataset_val_count: Optional[int] = Field(default=None, ge=0)
+    dataset_test_count: Optional[int] = Field(default=None, ge=0)
+    class_count: Optional[int] = Field(default=None, ge=1, le=10_000)
+    label_format: Optional[str] = Field(default=None, max_length=50)
+    kaggle_dataset_url: Optional[str] = Field(default=None, max_length=500)
+    dataset_path: Optional[str] = Field(default=None, max_length=500)
+    dataset_train_count: Optional[int] = Field(default=None, ge=0)
+    expected_delivery: Optional[str] = Field(default=None, max_length=50)
+    reviewer_note: Optional[str] = Field(default=None, max_length=2000)
+    reviewed_by: Optional[str] = Field(default=None, max_length=100)
     reviewed_at: Optional[datetime] = None
-    model_output_path: Optional[str] = None
+    model_output_path: Optional[str] = Field(default=None, max_length=500)
+
+    @field_validator("priority")
+    @classmethod
+    def _priority_whitelist(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if v not in _PRIORITY_WHITELIST:
+            raise ValueError(f"priority must be one of {sorted(_PRIORITY_WHITELIST)}")
+        return v
 
 
 class SubmissionOut(BaseModel):
