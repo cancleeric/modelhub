@@ -27,6 +27,10 @@ from models import ModelVersion, Submission, get_db
 
 logger = logging.getLogger("modelhub.inference")
 
+# P2-23: module-level 模型 cache，避免每次 /v1/detect 都重載 YOLO 模型
+# key: model_path（str），value: YOLO 實例
+_model_cache: dict = {}
+
 router = APIRouter()
 
 
@@ -267,12 +271,18 @@ def detect(
     def _timeout_handler(signum, frame):
         raise TimeoutError("inference timeout")
 
+    # P2-23: 從 cache 取模型，避免每次重載
+    def _get_model(path_str: str):
+        if path_str not in _model_cache:
+            _model_cache[path_str] = YOLO(path_str)
+        return _model_cache[path_str]
+
     t0 = time.time()
     try:
         signal.signal(signal.SIGALRM, _timeout_handler)
         signal.alarm(5)
 
-        model = YOLO(str(model_path))
+        model = _get_model(str(model_path))
         pil_img = PILImage.open(io.BytesIO(img_bytes)).convert("RGB")
         img_w, img_h = pil_img.size
 

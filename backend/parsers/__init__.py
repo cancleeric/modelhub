@@ -1,12 +1,14 @@
 """
 parsers registry — 由 arch 字首 match，回傳 dict 指標
 """
+from typing import Optional
+
 from .yolo import parse_yolo_log
 from .classification import parse_classification_log
 from .ocr import parse_ocr_log
 
 
-def parse_training_log(arch: str | None, log_text: str) -> dict:
+def parse_training_log(arch: Optional[str], log_text: str) -> dict:  # P3-26: str | None → Optional[str]
     """依 arch 決定解析器；回傳 dict，至少包含 metrics / raw 欄位。"""
     arch = (arch or "").lower()
     if arch.startswith("yolo"):

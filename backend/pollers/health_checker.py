@@ -246,7 +246,7 @@ async def run_health_check() -> dict:
 
 
 async def send_daily_report() -> None:
-    """每日 08:00 Asia/Taipei 發送健康日報"""
+    """每日 08:00 Asia/Taipei 發送健康日報（P3-29: 加結構化 Markdown 表格）"""
     from notifications import notify, CTO_TARGET
     from queue_manager import QueueManager
 
@@ -301,14 +301,72 @@ async def send_daily_report() -> None:
         except Exception:
             pass
 
+        # P3-29: 工單狀態分佈
+        status_dist: dict = {}
+        try:
+            from sqlalchemy import func
+            rows_dist = (
+                db.query(Submission.status, func.count(Submission.id).label("cnt"))
+                .group_by(Submission.status)
+                .all()
+            )
+            status_dist = {r.status: r.cnt for r in rows_dist}
+        except Exception:
+            pass
+
+        # P3-29: Lightning 最後 poll 時間
+        lightning_last_poll_str = "未知"
+        try:
+            from pollers.lightning_poller import get_last_poll_at
+            lp = get_last_poll_at()
+            if lp:
+                lightning_last_poll_str = lp.strftime("%Y-%m-%d %H:%M UTC")
+        except Exception:
+            pass
+
+        # P3-29: Kaggle 配額使用率
+        kaggle_used_pct = "未知"
+        try:
+            if kaggle_remaining is not None:
+                total_weekly = 30.0
+                used = max(0.0, total_weekly - kaggle_remaining)
+                kaggle_used_pct = f"{used / total_weekly * 100:.1f}%（已用 {used:.1f}h / {total_weekly:.0f}h）"
+        except Exception:
+            pass
+
+        # 建構 Markdown 報告
+        kaggle_str = f"{kaggle_remaining:.1f}h" if kaggle_remaining is not None else "未知"
+        lightning_str = f"{lightning_remaining:.1f}h" if lightning_remaining is not None else "未知"
+
+        # 工單狀態表格
+        status_rows = "\n".join(
+            f"| {s} | {c} |"
+            for s, c in sorted(status_dist.items(), key=lambda x: -x[1])
+        ) if status_dist else "| （無資料） | — |"
+
         lines = [
-            "[ModelHub] 每日健康報告",
-            f"時間：{now.strftime('%Y-%m-%d %H:%M UTC')}",
+            "## [ModelHub] 每日健康報告",
+            f"**時間：** {now.strftime('%Y-%m-%d %H:%M UTC')}",
             "",
-            f"Kaggle 本週剩餘：{f'{kaggle_remaining:.1f}h' if kaggle_remaining is not None else '未知'}",
-            f"Lightning 本月剩餘：{f'{lightning_remaining:.1f}h' if lightning_remaining is not None else '未知'}",
-            f"訓練中任務：{active_count} 件",
-            f"隊列 waiting：{waiting_count} / running：{running_count}",
+            "### 資源配額",
+            "| 資源 | 狀態 |",
+            "|------|------|",
+            f"| Kaggle 本週剩餘 | {kaggle_str} |",
+            f"| Kaggle 使用率 | {kaggle_used_pct} |",
+            f"| Lightning 本月剩餘 | {lightning_str} |",
+            f"| Lightning 最後 poll | {lightning_last_poll_str} |",
+            "",
+            "### 訓練隊列",
+            "| 指標 | 數值 |",
+            "|------|------|",
+            f"| 訓練中任務 | {active_count} 件 |",
+            f"| 隊列 waiting | {waiting_count} |",
+            f"| 隊列 running | {running_count} |",
+            "",
+            "### 工單狀態分佈",
+            "| 狀態 | 件數 |",
+            "|------|------|",
+            status_rows,
         ]
 
         await notify(CTO_TARGET, "\n".join(lines))

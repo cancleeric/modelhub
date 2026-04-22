@@ -8,6 +8,7 @@ Sprint 17 P2-2: 改為動態掃描 kaggle-kernels/ 子目錄的 kernel-metadata.
 
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -15,6 +16,19 @@ logger = logging.getLogger("modelhub.resources.kernel_registry")
 
 # Kaggle kernels 根目錄（相對於本檔往上兩層到 modelhub root）
 _KAGGLE_KERNELS_ROOT = Path(__file__).parent.parent.parent / "kaggle-kernels"
+
+# P2-18: module-level TTL cache，避免每次呼叫都掃磁碟
+_cache: Optional[dict] = None
+_cache_expires: float = 0.0
+
+
+def _get_registry(ttl: int = 300) -> dict:
+    """回傳 {req_no: kernel_dir_name}，TTL 300s（可透過參數覆寫）。"""
+    global _cache, _cache_expires
+    if _cache is None or time.monotonic() > _cache_expires:
+        _cache = _scan_kernels()
+        _cache_expires = time.monotonic() + ttl
+    return _cache
 
 
 def _scan_kernels() -> dict[str, str]:
@@ -50,16 +64,13 @@ def _scan_kernels() -> dict[str, str]:
     return result
 
 
-# 動態建構（模組載入時掃描一次）；get_kernel_dir / has_kaggle_kernel 每次呼叫時重新掃描
-# 若效能有疑慮，未來可加 TTL cache。
-
-
 def get_kernel_dir(req_no: str) -> Optional[Path]:
     """
     回傳 kaggle-kernels/{kernel_name}/ 的絕對路徑。
     若 req_no 不在掃描結果或目錄不存在，回傳 None。
+    結果來自 TTL cache（預設 300s），不每次掃磁碟。
     """
-    kernel_map = _scan_kernels()
+    kernel_map = _get_registry()
     kernel_name = kernel_map.get(req_no)
     if not kernel_name:
         return None
@@ -70,5 +81,5 @@ def get_kernel_dir(req_no: str) -> Optional[Path]:
 
 
 def has_kaggle_kernel(req_no: str) -> bool:
-    """該 req_no 是否有對應的 Kaggle kernel 目錄"""
+    """該 req_no 是否有對應的 Kaggle kernel 目錄（結果來自 TTL cache）"""
     return get_kernel_dir(req_no) is not None

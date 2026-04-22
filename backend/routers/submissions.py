@@ -155,6 +155,8 @@ class SubmissionOut(BaseModel):
     # Sprint 17 P1-4
     lightning_studio_name: Optional[str] = None
     created_at: datetime
+    # P3-25
+    updated_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
 
@@ -196,7 +198,9 @@ async def list_submissions(
     current_user: dict = CurrentUser,
 ):
     # P2-15: 加分頁（limit/offset），預設 limit=50
+    # P2-13: 過濾系統用 magic string req_no（__quota__、__quota_lightning__、__health__ 等）
     q = db.query(Submission)
+    q = q.filter(~Submission.req_no.like("__%__%"))
     if status:
         q = q.filter(Submission.status == status)
     if product:
@@ -348,6 +352,8 @@ async def update_submission(
 
     for field, value in updates.items():
         setattr(obj, field, value)
+    # P3-25: 自動記錄最後更新時間
+    obj.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(obj)
     return obj

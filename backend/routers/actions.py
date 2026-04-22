@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from models import Submission, SubmissionHistory, SessionLocal, get_db
 from notifications import notify_event
-from auth import CurrentUser, CurrentUserOrApiKey, require_role
+from auth import CurrentUser, CurrentUserOrApiKey, require_role, assert_role
 
 import logging
 _logger = logging.getLogger("modelhub.routers.actions")
@@ -227,20 +227,9 @@ async def perform_action(
             detail=f"Unknown action '{action}'. Valid: {list(TRANSITIONS.keys())}",
         )
 
-    # P3-3: approve 需要 reviewer role
+    # P2-24 / P3-3: approve 需要 reviewer role，改用 assert_role() 統一邏輯
     if action == "approve":
-        import os as _os
-        skip = _os.getenv("SKIP_ROLE_CHECK", "false").lower() == "true"
-        if not skip:
-            _role_claim = _os.getenv("MODELHUB_ROLE_CLAIM", "modelhub_role")
-            user_role = (current_user or {}).get(_role_claim)
-            # API Key 使用者（sub 以 api_key: 開頭）略過
-            is_api_key = str((current_user or {}).get("sub", "")).startswith("api_key:")
-            if not is_api_key and user_role != "reviewer":
-                raise HTTPException(
-                    status_code=403,
-                    detail=f"approve requires role 'reviewer', current='{user_role}'",
-                )
+        assert_role("reviewer", current_user)
 
     # reject / resubmit 有獨立端點用於結構化欄位，但保留這裡作為相容後門
     obj = db.query(Submission).filter(Submission.req_no == req_no).first()

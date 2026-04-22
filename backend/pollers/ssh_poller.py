@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from models import SessionLocal, Submission, ModelVersion, SubmissionHistory
 from parsers import parse_training_log
 from notifications import notify_event
-from utils import next_version_for as _next_version_for
+from utils import next_version_for as _next_version_for, read_log_files as _read_log_files
 
 logger = logging.getLogger("modelhub.poller.ssh")
 
@@ -57,28 +57,7 @@ def _get_host_from_resource(training_resource: str) -> Optional[str]:
     return training_resource[len("ssh@"):]
 
 
-def _read_log_files(dir_path: str) -> str:
-    """讀取目錄下所有 log/txt 檔案（最大 5MB）"""
-    acc = []
-    MAX_SIZE = 5 * 1024 * 1024
-    total = 0
-    root = Path(dir_path)
-    if not root.exists():
-        return ""
-    for f in sorted(root.rglob("*")):
-        if not f.is_file():
-            continue
-        if f.suffix.lower() not in (".log", ".txt", ".json", ".out", ".stdout"):
-            continue
-        try:
-            size = f.stat().st_size
-            if total + size > MAX_SIZE:
-                break
-            acc.append(f.read_text(errors="replace"))
-            total += size
-        except Exception:
-            continue
-    return "\n".join(acc)
+# P3-28: _read_log_files 已移至 utils.read_log_files，透過 import 取得
 
 
 def _process_submission(db: Session, sub: Submission) -> None:

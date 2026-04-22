@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from models import SessionLocal, Submission, ModelVersion
 from parsers import parse_training_log
 from notifications import notify_event
-from utils import next_version_for as _next_version_for
+from utils import next_version_for as _next_version_for, read_log_files as _read_log_files
 
 logger = logging.getLogger("modelhub.poller.kaggle")
 
@@ -111,28 +111,7 @@ async def _download_kernel_output(slug: str, dest_dir: str) -> Optional[str]:
         return None
 
 
-def _read_log_files(dir_path: str) -> str:
-    """把 dir 裡所有 .log / .txt / .json 都 concat（不超過 5MB）"""
-    acc = []
-    MAX_SIZE = 5 * 1024 * 1024
-    total = 0
-    root = Path(dir_path)
-    if not root.exists():
-        return ""
-    for f in sorted(root.rglob("*")):
-        if not f.is_file():
-            continue
-        if f.suffix.lower() not in (".log", ".txt", ".json", ".out", ".stdout"):
-            continue
-        try:
-            size = f.stat().st_size
-            if total + size > MAX_SIZE:
-                break
-            acc.append(f.read_text(errors="replace"))
-            total += size
-        except Exception:
-            continue
-    return "\n".join(acc)
+# P3-28: _read_log_files 已移至 utils.read_log_files，透過 import 取得
 
 
 def _append_history(db: Session, req_no: str, action: str, meta: Optional[dict] = None,

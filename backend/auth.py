@@ -8,6 +8,7 @@ auth.py — LIDS JWT + API Key 認證
 import logging
 import os
 from datetime import datetime
+from typing import Optional
 
 import httpx
 from fastapi import Depends, Header, HTTPException, Security
@@ -28,7 +29,7 @@ if not _BOOTSTRAP_KEY_RAW:
 _KNOWN_INSECURE_KEYS = {"modelhub-dev-key-2026"}
 
 
-def _verify_api_key_db(x_api_key: str) -> dict | None:
+def _verify_api_key_db(x_api_key: str) -> Optional[dict]:  # P3-26: dict | None → Optional[dict]
     """查 DB api_keys table，成功回 {sub,name}，失敗回 None。"""
     if not x_api_key:
         return None
@@ -48,7 +49,7 @@ def _verify_api_key_db(x_api_key: str) -> dict | None:
         db.close()
 
 
-def verify_api_key(x_api_key: str) -> dict | None:
+def verify_api_key(x_api_key: str) -> Optional[dict]:  # P3-26: dict | None → Optional[dict]
     """回 userinfo dict 或 None。先查 DB，fallback env bootstrap key（拒絕 insecure 預設值）。"""
     if not x_api_key:
         return None
@@ -153,6 +154,27 @@ CurrentUserOrApiKey = Depends(get_current_user_or_api_key)
 # SKIP_ROLE_CHECK: 設為 "true" 時跳過 role 檢查（dev 環境 LIDS 未設 claim 時用）
 _ROLE_CLAIM_KEY = os.getenv("MODELHUB_ROLE_CLAIM", "modelhub_role")
 _SKIP_ROLE_CHECK = os.getenv("SKIP_ROLE_CHECK", "false").lower() == "true"
+
+
+def assert_role(role: str, current_user: dict) -> None:
+    """
+    P2-24: 同步版 role check，供 endpoint 函式體內（非 Depends）使用。
+    邏輯與 require_role Depends 完全一致：
+      - SKIP_ROLE_CHECK=true 時略過
+      - API Key 使用者（sub 以 "api_key:" 開頭）略過
+      - 否則要求 MODELHUB_ROLE_CLAIM == role
+    """
+    if _SKIP_ROLE_CHECK:
+        return
+    is_api_key = str((current_user or {}).get("sub", "")).startswith("api_key:")
+    if is_api_key:
+        return
+    user_role = (current_user or {}).get(_ROLE_CLAIM_KEY)
+    if user_role != role:
+        raise HTTPException(
+            status_code=403,
+            detail=f"approve requires role '{role}', current='{user_role}'",
+        )
 
 
 def require_role(role: str):

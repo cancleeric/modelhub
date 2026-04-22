@@ -96,6 +96,8 @@ class Submission(Base):
     lightning_studio_name = Column(String, nullable=True)
     # --- 時間戳記 ---
     created_at = Column(DateTime, default=datetime.utcnow)
+    # P3-25: 最後更新時間（update_submission() 自動設定）
+    updated_at = Column(DateTime, nullable=True)
 
 
 class ModelVersion(Base):
@@ -173,6 +175,15 @@ class SubmissionHistory(Base):
 
 
 # SQLite 手動 migration：新欄位補到既有 table
+#
+# ⛔ DO NOT ADD NEW MIGRATIONS HERE ⛔
+#
+# 此清單僅用於 SQLite 環境的向後相容（逐欄 ALTER TABLE）。
+# 新欄位的 migration 請統一走 Alembic（alembic/versions/），
+# 詳見 alembic/README.md。
+#
+# 如果你在 SQLite dev 環境確實需要補欄位，請同步在 alembic/versions/
+# 建立對應 migration file，再把 ALTER TABLE 也加進下面清單（並備注「最後一筆」）。
 _MIGRATIONS = [
     # (table, column, ddl_suffix)
     ("submissions", "rejection_reasons",        "VARCHAR"),
@@ -207,6 +218,8 @@ _MIGRATIONS = [
     # Sprint 17 P1-4: Lightning Studio 名稱
     ("submissions", "lightning_studio_name",    "VARCHAR"),
     # Sprint 20: 訓練隊列（SQLite 用 create_all 建表，此列僅佔位確保 migration 完整性）
+    # P3-25: updated_at — 最後一筆手動 migration（新 migration 請走 Alembic）
+    ("submissions", "updated_at", "DATETIME"),
 ]
 
 

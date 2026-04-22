@@ -53,8 +53,10 @@ def _get_lightning_studio(studio_name: str):
     """
     try:
         from lightning_sdk import Studio  # type: ignore
-        username = os.environ.get("LIGHTNING_USERNAME", "boardgamegroup")
-        teamspace = os.environ.get("LIGHTNING_TEAMSPACE", "boardgamegroup")
+        # P2-16: 統一從 env 讀取，與 lightning_launcher.py 一致
+        # 正確帳號：cancleeric / default-teamspace（見 docker-compose.yml）
+        username = os.environ.get("LIGHTNING_USERNAME", "cancleeric")
+        teamspace = os.environ.get("LIGHTNING_TEAMSPACE", "default-teamspace")
         studio = Studio(name=studio_name, teamspace=teamspace)
         return studio
     except Exception as exc:
