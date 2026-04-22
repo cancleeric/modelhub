@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 from models import SessionLocal, Submission, ModelVersion
 from parsers import parse_training_log
 from notifications import notify_event
+from utils import next_version_for as _next_version_for
 
 logger = logging.getLogger("modelhub.poller.kaggle")
 
@@ -228,20 +229,6 @@ async def _on_kernel_complete(db: Session, sub: Submission) -> None:
     db.commit()
     db.refresh(sub)
     await notify_event("training_complete", sub)
-
-
-def _next_version_for(db: Session, req_no: str) -> str:
-    latest = (
-        db.query(ModelVersion)
-        .filter(ModelVersion.req_no == req_no)
-        .order_by(ModelVersion.id.desc())
-        .first()
-    )
-    if not latest:
-        return "v1"
-    m = re.match(r"v(\d+)", latest.version or "")
-    n = int(m.group(1)) + 1 if m else 1
-    return f"v{n}"
 
 
 def _append_training_failed_summary(db: Session, sub: Submission) -> None:

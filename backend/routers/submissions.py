@@ -190,9 +190,12 @@ async def list_submissions(
     status: Optional[str] = None,
     product: Optional[str] = None,
     dataset_status: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
     db: Session = Depends(get_db),
     current_user: dict = CurrentUser,
 ):
+    # P2-15: 加分頁（limit/offset），預設 limit=50
     q = db.query(Submission)
     if status:
         q = q.filter(Submission.status == status)
@@ -200,7 +203,7 @@ async def list_submissions(
         q = q.filter(Submission.product == product)
     if dataset_status:
         q = q.filter(Submission.dataset_status == dataset_status)
-    return q.order_by(Submission.created_at.desc()).all()
+    return q.order_by(Submission.created_at.desc()).offset(offset).limit(limit).all()
 
 
 @router.get("/{req_no}", response_model=SubmissionOut)
@@ -231,15 +234,20 @@ async def create_submission(
 
     year = datetime.utcnow().year
     prefix = f"MH-{year}-"
-    latest = (
-        db.query(Submission)
-        .filter(Submission.req_no.like(f"{prefix}%"))
-        .order_by(Submission.req_no.desc())
-        .first()
-    )
+    # P1-2: 改用 integer 排序取最大序號，避免字串排序在 ≥1000 筆時取錯
+    from sqlalchemy import text as _text
+    latest = db.execute(
+        _text(
+            "SELECT req_no FROM submissions "
+            "WHERE req_no LIKE :prefix "
+            "ORDER BY CAST(SUBSTR(req_no, :offset) AS INTEGER) DESC "
+            "LIMIT 1"
+        ),
+        {"prefix": f"{prefix}%", "offset": len(prefix) + 1},
+    ).fetchone()
     if latest:
         try:
-            last_seq = int(latest.req_no.split("-")[-1])
+            last_seq = int(latest[0].split("-")[-1])
         except ValueError:
             last_seq = 0
     else:
@@ -258,6 +266,49 @@ async def create_submission(
     )
 
 
+
+# P1-3: PATCH 狀態機白名單
+# 各狀態允許修改的欄位集合；未列出的狀態視為終態，一律拒絕寫入核心欄位
+_CORE_FIELDS = {
+    "map50_target", "map50_95_target", "map50_threshold",
+    "arch", "model_type", "class_list", "inference_latency_ms",
+    "model_size_limit_mb", "input_spec",
+}
+_EDITABLE_IN_STATUS: dict[str, set[str]] = {
+    "draft": {
+        "req_name", "product", "company", "submitter", "purpose", "priority",
+        "model_type", "class_list", "map50_threshold", "map50_target", "map50_95_target",
+        "inference_latency_ms", "model_size_limit_mb", "arch", "input_spec",
+        "deploy_env", "dataset_source", "dataset_count", "dataset_val_count",
+        "dataset_test_count", "class_count", "label_format", "kaggle_dataset_url",
+        "dataset_path", "dataset_train_count", "expected_delivery",
+        "reviewer_note", "reviewed_by", "reviewed_at",
+    },
+    "rejected": {
+        "req_name", "product", "company", "submitter", "purpose", "priority",
+        "dataset_path", "kaggle_dataset_url", "dataset_source", "dataset_count",
+        "dataset_val_count", "dataset_test_count", "dataset_train_count",
+        "class_count", "label_format", "expected_delivery",
+        "reviewer_note",
+    },
+    # pending_review / approved / training / trained 允許審查相關欄位（不允許核心規格）
+    "pending_review": {
+        "reviewer_note", "reviewed_by", "reviewed_at",
+        "model_output_path",
+    },
+    "approved": {
+        "reviewer_note", "reviewed_by", "reviewed_at",
+        "model_output_path",
+    },
+    "training": {
+        "reviewer_note", "model_output_path",
+    },
+    "trained": {
+        "reviewer_note", "model_output_path",
+    },
+}
+
+
 @router.patch("/{req_no}", response_model=SubmissionOut)
 async def update_submission(
     req_no: str,
@@ -268,7 +319,34 @@ async def update_submission(
     obj = db.query(Submission).filter(Submission.req_no == req_no).first()
     if not obj:
         raise HTTPException(status_code=404, detail="Submission not found")
-    for field, value in payload.model_dump(exclude_none=True).items():
+
+    # P1-3: 狀態機保護
+    allowed_fields = _EDITABLE_IN_STATUS.get(obj.status)
+    updates = payload.model_dump(exclude_none=True)
+    if allowed_fields is not None:
+        blocked = set(updates.keys()) - allowed_fields
+        if blocked:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"工單 {req_no} 目前狀態 '{obj.status}'，"
+                    f"不允許修改欄位：{sorted(blocked)}。"
+                    f"此狀態允許修改：{sorted(allowed_fields)}"
+                ),
+            )
+    else:
+        # 未列出的狀態（如 failed、accepted）— 禁止修改任何核心規格欄位
+        blocked_core = set(updates.keys()) & _CORE_FIELDS
+        if blocked_core:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"工單 {req_no} 目前狀態 '{obj.status}'，"
+                    f"不允許修改核心規格欄位：{sorted(blocked_core)}"
+                ),
+            )
+
+    for field, value in updates.items():
         setattr(obj, field, value)
     db.commit()
     db.refresh(obj)

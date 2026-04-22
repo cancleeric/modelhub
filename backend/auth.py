@@ -84,17 +84,11 @@ LIDS_USERINFO_URL_FALLBACK = "http://localhost:8073/connect/userinfo"
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
-async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
-) -> dict:
+async def _verify_lids_token(token: str) -> dict:
     """
-    驗證 Bearer token，回傳 userinfo dict。
-    token 無效或缺少時拋 401。
+    P1-4: 共用 LIDS token 驗證邏輯。
+    成功回傳 userinfo dict，失敗拋 HTTPException(401)。
     """
-    if credentials is None:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
-    token = credentials.credentials
     async with httpx.AsyncClient(timeout=5.0) as client:
         for url in [LIDS_USERINFO_URL, LIDS_USERINFO_URL_FALLBACK]:
             try:
@@ -113,8 +107,19 @@ async def get_current_user(
                 raise
             except Exception:
                 continue
-
     raise HTTPException(status_code=401, detail="Unable to verify token (LIDS unreachable)")
+
+
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
+) -> dict:
+    """
+    驗證 Bearer token，回傳 userinfo dict。
+    token 無效或缺少時拋 401。
+    """
+    if credentials is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return await _verify_lids_token(credentials.credentials)
 
 
 async def get_current_user_or_api_key(
@@ -136,27 +141,7 @@ async def get_current_user_or_api_key(
     # fallback: LIDS Bearer token
     if credentials is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
-
-    token = credentials.credentials
-    async with httpx.AsyncClient(timeout=5.0) as client:
-        for url in [LIDS_USERINFO_URL, LIDS_USERINFO_URL_FALLBACK]:
-            try:
-                resp = await client.get(
-                    url,
-                    headers={"Authorization": f"Bearer {token}"},
-                )
-                if resp.status_code == 200:
-                    return resp.json()
-                if resp.status_code in (401, 403):
-                    raise HTTPException(status_code=401, detail="Invalid or expired token")
-            except httpx.ConnectError:
-                continue
-            except HTTPException:
-                raise
-            except Exception:
-                continue
-
-    raise HTTPException(status_code=401, detail="Unable to verify token (LIDS unreachable)")
+    return await _verify_lids_token(credentials.credentials)
 
 
 # 方便在 router 直接 import 用
@@ -190,29 +175,9 @@ def require_role(role: str):
             raise HTTPException(status_code=401, detail="Invalid API key")
         if credentials is None:
             raise HTTPException(status_code=401, detail="Not authenticated")
-        # 取 userinfo
+        # 取 userinfo（P1-4: 呼叫共用 _verify_lids_token）
         token = credentials.credentials
-        userinfo: dict = {}
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            for url in [LIDS_USERINFO_URL, LIDS_USERINFO_URL_FALLBACK]:
-                try:
-                    resp = await client.get(
-                        url,
-                        headers={"Authorization": f"Bearer {token}"},
-                    )
-                    if resp.status_code == 200:
-                        userinfo = resp.json()
-                        break
-                    if resp.status_code in (401, 403):
-                        raise HTTPException(status_code=401, detail="Invalid or expired token")
-                except httpx.ConnectError:
-                    continue
-                except HTTPException:
-                    raise
-                except Exception:
-                    continue
-        if not userinfo:
-            raise HTTPException(status_code=401, detail="Unable to verify token (LIDS unreachable)")
+        userinfo = await _verify_lids_token(token)
         user_role = userinfo.get(_ROLE_CLAIM_KEY)
         if user_role != role:
             raise HTTPException(

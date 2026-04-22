@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from models import SessionLocal, Submission, ModelVersion
 from parsers import parse_training_log
 from notifications import notify_event
+from utils import next_version_for as _next_version_for
 
 logger = logging.getLogger("modelhub.poller.lightning")
 
@@ -257,24 +258,10 @@ def _process_submission(
             except Exception:
                 pass
 
-        # 建 ModelVersion
+        # 建 ModelVersion（P1-8: 使用共用 _next_version_for）
         from models import ModelVersion as _ModelVersion
-        import re as _re
 
-        def _next_version(req_no: str, db: Session) -> str:
-            latest = (
-                db.query(_ModelVersion)
-                .filter(_ModelVersion.req_no == req_no)
-                .order_by(_ModelVersion.id.desc())
-                .first()
-            )
-            if not latest:
-                return "v1"
-            m2 = _re.match(r"v(\d+)", latest.version or "")
-            n = int(m2.group(1)) + 1 if m2 else 1
-            return f"v{n}"
-
-        next_ver = _next_version(submission.req_no, db)
+        next_ver = _next_version_for(db, submission.req_no)
         mv = _ModelVersion(
             req_no=submission.req_no,
             product=submission.product,
@@ -308,11 +295,10 @@ def _process_submission(
         db.refresh(submission)
         import asyncio
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                loop.create_task(notify_event("training_complete", submission))
-            else:
-                loop.run_until_complete(notify_event("training_complete", submission))
+            loop = asyncio.get_running_loop()
+            asyncio.run_coroutine_threadsafe(notify_event("training_complete", submission), loop)
+        except RuntimeError:
+            asyncio.run(notify_event("training_complete", submission))
         except Exception:
             pass
 
@@ -325,11 +311,10 @@ def _process_submission(
         db.commit()
         import asyncio
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                loop.create_task(notify_event("training_failed", submission))
-            else:
-                loop.run_until_complete(notify_event("training_failed", submission))
+            loop = asyncio.get_running_loop()
+            asyncio.run_coroutine_threadsafe(notify_event("training_failed", submission), loop)
+        except RuntimeError:
+            asyncio.run(notify_event("training_failed", submission))
         except Exception:
             pass
 
@@ -344,11 +329,10 @@ def _process_submission(
             )
             import asyncio
             try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    loop.create_task(notify_event("training_overtime", submission))
-                else:
-                    loop.run_until_complete(notify_event("training_overtime", submission))
+                loop = asyncio.get_running_loop()
+                asyncio.run_coroutine_threadsafe(notify_event("training_overtime", submission), loop)
+            except RuntimeError:
+                asyncio.run(notify_event("training_overtime", submission))
             except Exception:
                 pass
 
@@ -366,18 +350,9 @@ def _check_lightning_quota_warning(db: Session) -> None:
         if remaining >= QUOTA_WARN_THRESHOLD:
             return
 
-        # 1 小時節流
+        # 1 小時節流（P2-19: 移除 dead code join query）
         from datetime import timedelta as _td
         cutoff = datetime.utcnow() - _td(hours=1)
-        already = (
-            db.query(Submission)
-            .join(
-                __import__("models", fromlist=["SubmissionHistory"]).SubmissionHistory,
-                __import__("models", fromlist=["SubmissionHistory"]).SubmissionHistory.req_no == "__quota_lightning__",
-            )
-            .first()
-        )
-        # 用 SubmissionHistory 做節流記錄（簡化版：直接查）
         from models import SubmissionHistory
         already_sent = (
             db.query(SubmissionHistory)
@@ -404,18 +379,21 @@ def _check_lightning_quota_warning(db: Session) -> None:
         from notifications import notify, CTO_TARGET
         import asyncio
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                loop.create_task(notify(
+            loop = asyncio.get_running_loop()
+            asyncio.run_coroutine_threadsafe(
+                notify(
                     CTO_TARGET,
                     f"[ModelHub] Lightning 配額預警：本月剩餘 {remaining:.1f} 小時，"
                     f"低於 {QUOTA_WARN_THRESHOLD}h 閾值。",
-                ))
-            else:
-                loop.run_until_complete(notify(
-                    CTO_TARGET,
-                    f"[ModelHub] Lightning 配額預警：本月剩餘 {remaining:.1f} 小時。",
-                ))
+                ),
+                loop,
+            )
+        except RuntimeError:
+            asyncio.run(notify(
+                CTO_TARGET,
+                f"[ModelHub] Lightning 配額預警：本月剩餘 {remaining:.1f} 小時，"
+                f"低於 {QUOTA_WARN_THRESHOLD}h 閾值。",
+            ))
         except Exception:
             pass
         logger.warning("Lightning quota warning sent: remaining=%.1fh", remaining)

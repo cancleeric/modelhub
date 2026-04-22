@@ -88,7 +88,7 @@ def build_yolo_config(
     patience: int = 10,
     imgsz: int = 640,
     batch: int = 16,
-    device: str = "cpu",
+    device: Optional[str] = None,
     **augmentation_kwargs,
 ) -> Dict:
     """
@@ -126,7 +126,7 @@ def eval_and_write_result(
     train_seconds: int,
     epochs: int,
     imgsz: int,
-    device: str = "cpu",
+    device: Optional[str] = None,
     map50_target: float = 0.70,
     map50_baseline: float = 0.60,
     extra_fields: Optional[Dict] = None,
@@ -135,7 +135,11 @@ def eval_and_write_result(
     """
     對 model 執行 val()，計算 mAP50/mAP50-95 及 per-class AP50，
     判斷 verdict，寫 result.json，並回傳 result dict。
+
+    P2-17: device 必須由 caller 明確傳入，不接受 None（本機 caller 請傳 "mps"）
     """
+    if device is None:
+        raise ValueError("device 必須明確傳入（例：'mps' 或 '0'），不可為 None")
     metrics = model.val(data=str(yaml_path), imgsz=imgsz, device=device)
     map50 = float(metrics.box.map50)
     map50_95 = float(metrics.box.map)

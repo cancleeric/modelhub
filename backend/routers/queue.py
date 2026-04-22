@@ -8,12 +8,15 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+import os
+
 from models import get_db
 from auth import CurrentUserOrApiKey
 
 router = APIRouter()
 
-MAX_CONCURRENT_TRAININGS = 2  # 與 queue_dispatcher 一致，避免 circular import
+# P2-30: 統一讀環境變數，與 queue_dispatcher 保持一致
+MAX_CONCURRENT_TRAININGS = int(os.environ.get("MODELHUB_MAX_CONCURRENT", "2"))
 
 
 class QueueWaitingItem(BaseModel):

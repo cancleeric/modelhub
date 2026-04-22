@@ -11,6 +11,7 @@ SSH 命令：
   download_output: 用 scp/rsync 下載 best.pt
 """
 
+import base64
 import json
 import logging
 import os
@@ -106,7 +107,9 @@ class SSHLauncher:
             "data_yaml": cfg.get("data_yaml", "dataset/data.yaml"),
         }, ensure_ascii=False)
 
-        config_cmd = f"echo '{config_json}' > {remote_job_dir}/config.json"
+        # P1-5: 用 base64 傳輸，避免 config_json 含單引號時 shell injection
+        encoded = base64.b64encode(config_json.encode()).decode()
+        config_cmd = f"echo {encoded} | base64 -d > {remote_job_dir}/config.json"
         subprocess.run(
             ["ssh"] + SSH_COMMON_OPTS + [host, config_cmd],
             capture_output=True, text=True, timeout=SSH_TIMEOUT,

@@ -1,6 +1,7 @@
 """
 routers/kaggle.py — Kaggle Kernel 整合 API（Sprint 3）
 """
+import json
 from datetime import datetime
 from typing import Optional
 
@@ -53,7 +54,7 @@ async def attach_kernel(
         req_no=req_no,
         action="attach_kernel",
         actor=payload.actor or "unknown",
-        meta=f'{{"slug": "{payload.slug}", "version": {payload.version or "null"}}}',
+        meta=json.dumps({"slug": payload.slug, "version": payload.version}, ensure_ascii=False),
     ))
     db.commit()
     db.refresh(obj)

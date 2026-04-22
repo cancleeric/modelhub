@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from models import SessionLocal, Submission, ModelVersion, SubmissionHistory
 from parsers import parse_training_log
 from notifications import notify_event
+from utils import next_version_for as _next_version_for
 
 logger = logging.getLogger("modelhub.poller.ssh")
 
@@ -54,21 +55,6 @@ def _get_host_from_resource(training_resource: str) -> Optional[str]:
     if not training_resource or not training_resource.startswith("ssh@"):
         return None
     return training_resource[len("ssh@"):]
-
-
-def _next_version_for(db: Session, req_no: str) -> str:
-    import re
-    latest = (
-        db.query(ModelVersion)
-        .filter(ModelVersion.req_no == req_no)
-        .order_by(ModelVersion.id.desc())
-        .first()
-    )
-    if not latest:
-        return "v1"
-    m = re.match(r"v(\d+)", latest.version or "")
-    n = int(m.group(1)) + 1 if m else 1
-    return f"v{n}"
 
 
 def _read_log_files(dir_path: str) -> str:
@@ -131,11 +117,10 @@ def _process_submission(db: Session, sub: Submission) -> None:
                 db.commit()
                 import asyncio
                 try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        loop.create_task(notify_event("training_overtime", sub))
-                    else:
-                        loop.run_until_complete(notify_event("training_overtime", sub))
+                    loop = asyncio.get_running_loop()
+                    asyncio.run_coroutine_threadsafe(notify_event("training_overtime", sub), loop)
+                except RuntimeError:
+                    asyncio.run(notify_event("training_overtime", sub))
                 except Exception:
                     pass
 
@@ -200,13 +185,24 @@ def _on_ssh_complete(db: Session, sub: Submission, host: str, launcher) -> None:
     db.commit()
     db.refresh(sub)
 
+    # P2-20: 完成後通知 QueueManager
+    try:
+        from queue_manager import QueueManager
+        db2 = SessionLocal()
+        try:
+            QueueManager.mark_done_by_req(db2, sub.req_no)
+            db2.commit()
+        finally:
+            db2.close()
+    except Exception as _qe:
+        logger.warning("_on_ssh_complete: queue mark_done failed: %s", _qe)
+
     import asyncio
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(notify_event("training_complete", sub))
-        else:
-            loop.run_until_complete(notify_event("training_complete", sub))
+        loop = asyncio.get_running_loop()
+        asyncio.run_coroutine_threadsafe(notify_event("training_complete", sub), loop)
+    except RuntimeError:
+        asyncio.run(notify_event("training_complete", sub))
     except Exception:
         pass
 
@@ -225,11 +221,10 @@ def _on_ssh_error(db: Session, sub: Submission) -> None:
 
     import asyncio
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(notify_event("training_failed", sub))
-        else:
-            loop.run_until_complete(notify_event("training_failed", sub))
+        loop = asyncio.get_running_loop()
+        asyncio.run_coroutine_threadsafe(notify_event("training_failed", sub), loop)
+    except RuntimeError:
+        asyncio.run(notify_event("training_failed", sub))
     except Exception:
         pass
 
