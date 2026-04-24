@@ -207,6 +207,19 @@ async def _on_kernel_complete(db: Session, sub: Submission) -> None:
     )
     db.commit()
     db.refresh(sub)
+
+    # 完成後通知 QueueManager（修復 dispatcher 靜默鎖死 bug）
+    try:
+        from queue_manager import QueueManager
+        db2 = SessionLocal()
+        try:
+            QueueManager.mark_done_by_req(db2, sub.req_no)
+            db2.commit()
+        finally:
+            db2.close()
+    except Exception as _qe:
+        logger.warning("_on_kernel_complete: queue mark_done failed: %s", _qe)
+
     await notify_event("training_complete", sub)
 
 
@@ -288,6 +301,19 @@ async def _on_kernel_error(db: Session, sub: Submission, raw: str) -> None:
     _append_training_failed_summary(db, sub)
 
     db.commit()
+
+    # 真失敗（達重試上限）時通知 QueueManager（修復 dispatcher 靜默鎖死 bug）
+    try:
+        from queue_manager import QueueManager
+        db2 = SessionLocal()
+        try:
+            QueueManager.mark_failed_by_req(db2, sub.req_no, "kaggle training error")
+            db2.commit()
+        finally:
+            db2.close()
+    except Exception as _qe:
+        logger.warning("_on_kernel_error: queue mark_failed failed: %s", _qe)
+
     await notify_event("training_failed", sub)
 
 

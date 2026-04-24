@@ -295,6 +295,19 @@ def _process_submission(
         )
         db.commit()
         db.refresh(submission)
+
+        # 完成後通知 QueueManager（修復 dispatcher 靜默鎖死 bug）
+        try:
+            from queue_manager import QueueManager
+            db2 = SessionLocal()
+            try:
+                QueueManager.mark_done_by_req(db2, submission.req_no)
+                db2.commit()
+            finally:
+                db2.close()
+        except Exception as _qe:
+            logger.warning("_process_submission(lightning): queue mark_done failed: %s", _qe)
+
         import asyncio
         try:
             loop = asyncio.get_running_loop()
@@ -311,6 +324,19 @@ def _process_submission(
         _append_training_failed_summary_lightning(db, submission)
 
         db.commit()
+
+        # 失敗後通知 QueueManager（修復 dispatcher 靜默鎖死 bug）
+        try:
+            from queue_manager import QueueManager
+            db2 = SessionLocal()
+            try:
+                QueueManager.mark_failed_by_req(db2, submission.req_no, "lightning training error")
+                db2.commit()
+            finally:
+                db2.close()
+        except Exception as _qe:
+            logger.warning("_process_submission(lightning): queue mark_failed failed: %s", _qe)
+
         import asyncio
         try:
             loop = asyncio.get_running_loop()
