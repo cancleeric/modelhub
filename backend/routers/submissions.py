@@ -186,6 +186,13 @@ class SubmissionCreateResult(BaseModel):
     suggestions: list[str] = []
 
 
+class PaginatedSubmissions(BaseModel):
+    items: List[SubmissionOut]
+    total: int
+    limit: int
+    offset: int
+
+
 class ModelVersionOut(BaseModel):
     """P1-3: ModelVersion 查詢 schema，含追溯性欄位"""
     id: int
@@ -239,7 +246,7 @@ async def get_stats_summary(
     return {"total": total, "by_status": by_status}
 
 
-@router.get("/", response_model=List[SubmissionOut])
+@router.get("/", response_model=PaginatedSubmissions)
 async def list_submissions(
     status: Optional[str] = None,
     product: Optional[str] = None,
@@ -259,7 +266,9 @@ async def list_submissions(
         q = q.filter(Submission.product == product)
     if dataset_status:
         q = q.filter(Submission.dataset_status == dataset_status)
-    return q.order_by(Submission.created_at.desc()).offset(offset).limit(limit).all()
+    total = q.count()
+    items = q.order_by(Submission.created_at.desc()).offset(offset).limit(limit).all()
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
 @router.get("/{req_no}", response_model=SubmissionOut)

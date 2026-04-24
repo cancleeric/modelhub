@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { submissionsApi } from '../api/client'
+import { submissionsApi, type Submission } from '../api/client'
 import StatusBadge from '../components/StatusBadge'
 import RejectModal from '../components/RejectModal'
 
@@ -11,10 +11,11 @@ export default function ReviewPage() {
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [rejectTarget, setRejectTarget] = useState<Submission | null>(null)
 
-  const { data, isLoading } = useQuery({
+  const { data: rawData, isLoading } = useQuery({
     queryKey: ['submissions', 'submitted'],
-    queryFn: () => submissionsApi.list({ status: 'submitted' }),
+    queryFn: () => submissionsApi.list({ status: 'submitted', limit: 1000, offset: 0 }),
   })
+  const data = rawData?.items
 
   const actionMut = useMutation({
     mutationFn: ({

@@ -63,18 +63,7 @@ export default function SubmissionListPage() {
   const [productFilter, setProductFilter] = useState('')
   const [datasetFilter, setDatasetFilter] = useState('')
 
-  // Load all submissions (no status filter at API level so we can count stats)
-  const { data: allData } = useQuery({
-    queryKey: ['submissions-all'],
-    queryFn: () => submissionsApi.list(),
-    refetchInterval: (query) => {
-      const d = query.state.data
-      if (d && d.some((s) => s.status === 'training')) return 30000
-      return false
-    },
-  })
-
-  // Load filtered submissions for table
+  // F-01/B-01: 後端分頁，limit=1000 確保統計完整
   const { data, isLoading, error } = useQuery({
     queryKey: ['submissions', statusFilter, productFilter, datasetFilter],
     queryFn: () =>
@@ -82,28 +71,31 @@ export default function SubmissionListPage() {
         status: statusFilter || undefined,
         product: productFilter || undefined,
         dataset_status: datasetFilter || undefined,
+        limit: 1000,
+        offset: 0,
       }),
     refetchInterval: (query) => {
-      const d = query.state.data
-      if (d && d.some((s) => s.status === 'training')) return 30000
+      const items = query.state.data?.items
+      if (items && items.some((s) => s.status === 'training')) return 30000
       return false
     },
   })
 
-  // Compute 4 stats from allData
+  // F-04: summary card 永遠從篩選後的 items 計算，確保一致
   const statsCards = useMemo(() => {
-    if (!allData) return null
+    const items = data?.items
+    if (!items) return null
     const weekStart = getStartOfWeek()
-    const pending = allData.filter((s) => s.status === 'submitted').length
-    const training = allData.filter((s) => s.status === 'training').length
-    const approvedThisWeek = allData.filter(
+    const pending = items.filter((s) => s.status === 'submitted').length
+    const training = items.filter((s) => s.status === 'training').length
+    const approvedThisWeek = items.filter(
       (s) => s.status === 'approved' && s.reviewed_at && new Date(s.reviewed_at) >= weekStart,
     ).length
-    const totalGpuSec = allData.reduce((acc, s) => acc + (s.gpu_seconds || 0), 0)
+    const totalGpuSec = items.reduce((acc, s) => acc + (s.gpu_seconds || 0), 0)
     const totalGpuHours = Math.floor(totalGpuSec / 3600)
-    const totalCost = allData.reduce((acc, s) => acc + (s.estimated_cost_usd || 0), 0)
+    const totalCost = items.reduce((acc, s) => acc + (s.estimated_cost_usd || 0), 0)
     return { pending, training, approvedThisWeek, totalGpuHours, totalCost }
-  }, [allData])
+  }, [data])
 
   // 訓練隊列狀態（每 30 秒 refresh）
   const { data: queueStatus } = useQuery<QueueStatus>({
@@ -112,12 +104,15 @@ export default function SubmissionListPage() {
     refetchInterval: 30000,
   })
 
-  // Priority filter applied on frontend
+  // F-04: Priority filter 在前端做，從 items 篩選
   const filteredData = useMemo(() => {
-    if (!data) return data
-    if (!priorityFilter) return data
-    return data.filter((s) => s.priority === priorityFilter)
+    const items = data?.items
+    if (!items) return items
+    if (!priorityFilter) return items
+    return items.filter((s) => s.priority === priorityFilter)
   }, [data, priorityFilter])
+
+  const total = data?.total ?? 0
 
   return (
     <div>
@@ -131,9 +126,9 @@ export default function SubmissionListPage() {
         </Link>
       </div>
 
-      {/* Summary Cards */}
+      {/* Summary Cards — F-04: 顯示篩選後件數 */}
       {statsCards && (
-        <div className="grid grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-4 gap-4 mb-2">
           <div className="bg-white rounded shadow-sm p-4 flex items-center gap-3">
             <div className="w-10 h-10 rounded-full bg-yellow-100 flex items-center justify-center text-yellow-600 font-bold text-lg">
               {statsCards.pending}
@@ -170,6 +165,15 @@ export default function SubmissionListPage() {
               <div className="text-xs text-gray-400">估算 ${statsCards.totalCost.toFixed(2)}</div>
             </div>
           </div>
+        </div>
+      )}
+      {/* F-04: 篩選結果提示 */}
+      {data && (
+        <div className="text-xs text-gray-400 mb-4 pl-1">
+          目前篩選結果：共 {total} 筆
+          {priorityFilter && filteredData && filteredData.length !== total
+            ? `，顯示 ${filteredData.length} 筆（${priorityFilter}）`
+            : ''}
         </div>
       )}
 

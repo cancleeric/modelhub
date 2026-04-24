@@ -15,20 +15,21 @@ export default function AcceptanceQueuePage() {
   })
 
   // 抓對應 submission（target 值）
-  const { data: allSubs } = useQuery({
+  const { data: allSubsData } = useQuery({
     queryKey: ['submissions-all'],
-    queryFn: () => submissionsApi.list(),
+    queryFn: () => submissionsApi.list({ limit: 1000, offset: 0 }),
   })
 
   const targetByReq = useMemo(() => {
     const map: Record<string, { map50_target: number | null; req_name: string | null }> = {}
-    if (allSubs) {
-      allSubs.forEach((s) => {
+    const items = allSubsData?.items
+    if (items) {
+      items.forEach((s) => {
         map[s.req_no] = { map50_target: s.map50_target, req_name: s.req_name }
       })
     }
     return map
-  }, [allSubs])
+  }, [allSubsData])
 
   const acceptMut = useMutation({
     mutationFn: ({ v, note }: { v: ModelVersion; note: string }) =>

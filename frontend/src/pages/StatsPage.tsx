@@ -77,10 +77,12 @@ interface ResourceQuota {
 }
 
 export default function StatsPage() {
-  const { data: subs } = useQuery({
+  const { data: subsData } = useQuery({
     queryKey: ['submissions-all'],
-    queryFn: () => submissionsApi.list(),
+    queryFn: () => submissionsApi.list({ limit: 1000, offset: 0 }),
   })
+  // F-09: 從 paginated response 取 items
+  const subs = subsData?.items
   const { data: versions } = useQuery({
     queryKey: ['registry', 'all'],
     queryFn: () => registryApi.list(),
@@ -91,7 +93,8 @@ export default function StatsPage() {
     refetchInterval: 5 * 60 * 1000, // 每 5 分鐘更新
   })
 
-  const { data: systemStatus } = useQuery<SystemStatus>({
+  // systemStatus: consumed by ResourceHealthWidget（已整合），此處不再使用
+  useQuery<SystemStatus>({
     queryKey: ['system-status'],
     queryFn: () => api.get<SystemStatus>('/api/health/system-status').then((r) => r.data),
     refetchInterval: 60 * 1000, // 每 60 秒更新
@@ -146,7 +149,7 @@ export default function StatsPage() {
 
     // 驗收通過率
     const acceptedCount = s.filter((x) => x.status === 'accepted').length
-    const failedCount = s.filter((x) => x.status === 'training_failed' || x.status === 'failed').length
+    const failedCount = s.filter((x) => x.status === 'failed').length
     const passRateDenom = acceptedCount + failedCount
     const passRate = passRateDenom > 0 ? (acceptedCount / passRateDenom) * 100 : null
 
@@ -204,7 +207,7 @@ export default function StatsPage() {
     })
   }, [subs, versions])
 
-  if (!subs || !versions) {
+  if (!subsData || !versions) {
     return <p className="text-gray-500">載入中...</p>
   }
 
@@ -372,130 +375,6 @@ function QuotaCard({
           配額即將耗盡，請注意排程！
         </p>
       )}
-    </div>
-  )
-}
-
-function SystemStatusCard({ status }: { status: SystemStatus }) {
-  const now = Date.now()
-
-  function pollerAge(isoStr: string | null): { label: string; color: string } {
-    if (!isoStr) return { label: '從未執行', color: 'text-red-600' }
-    const ms = now - new Date(isoStr).getTime()
-    const mins = Math.floor(ms / 60000)
-    if (mins >= 15) return { label: `${mins} 分鐘前`, color: 'text-red-600' }
-    if (mins >= 5) return { label: `${mins} 分鐘前`, color: 'text-orange-500' }
-    return { label: mins === 0 ? '剛執行' : `${mins} 分鐘前`, color: 'text-green-600' }
-  }
-
-  const kagglePoller = pollerAge(status.kaggle_poller_last_at)
-  const lightningPoller = pollerAge(status.lightning_poller_last_at)
-
-  return (
-    <div className="bg-white rounded shadow p-5 mb-6">
-      <h3 className="text-sm font-semibold text-gray-700 mb-4">系統狀態</h3>
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        {/* API Server */}
-        <div className="flex items-center gap-2">
-          <span
-            className={`inline-block w-2.5 h-2.5 rounded-full ${
-              status.api_server === 'ok' ? 'bg-green-500' : 'bg-red-500'
-            }`}
-          />
-          <span className="text-sm text-gray-700">API 伺服器</span>
-          <span
-            className={`text-xs font-medium px-1.5 py-0.5 rounded ${
-              status.api_server === 'ok'
-                ? 'bg-green-100 text-green-700'
-                : 'bg-red-100 text-red-700'
-            }`}
-          >
-            {status.api_server === 'ok' ? 'OK' : 'DOWN'}
-          </span>
-        </div>
-
-        {/* 進行中訓練 */}
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-gray-700">進行中訓練</span>
-          <span
-            className={`text-xs font-semibold px-2 py-0.5 rounded ${
-              status.active_trainings > 0
-                ? 'bg-blue-100 text-blue-700'
-                : 'bg-gray-100 text-gray-500'
-            }`}
-          >
-            {status.active_trainings} 件
-          </span>
-        </div>
-
-        {/* Kaggle 配額 */}
-        <div>
-          <div className="text-xs text-gray-500 mb-1">Kaggle 剩餘（本週）</div>
-          {status.kaggle_remaining_hours != null ? (
-            <>
-              <div className="h-2 bg-gray-100 rounded overflow-hidden mb-1">
-                <div
-                  className={`h-full ${
-                    status.kaggle_remaining_hours < 5 ? 'bg-red-500' : 'bg-green-500'
-                  }`}
-                  style={{ width: `${Math.min(100, (status.kaggle_remaining_hours / 30) * 100)}%` }}
-                />
-              </div>
-              <span
-                className={`text-xs font-medium ${
-                  status.kaggle_remaining_hours < 5 ? 'text-red-600' : 'text-gray-700'
-                }`}
-              >
-                {status.kaggle_remaining_hours.toFixed(1)} h
-              </span>
-            </>
-          ) : (
-            <span className="text-xs text-gray-400">無資料</span>
-          )}
-        </div>
-
-        {/* Lightning 配額 */}
-        <div>
-          <div className="text-xs text-gray-500 mb-1">Lightning 剩餘（本月）</div>
-          {status.lightning_remaining_hours != null ? (
-            <>
-              <div className="h-2 bg-gray-100 rounded overflow-hidden mb-1">
-                <div
-                  className={`h-full ${
-                    status.lightning_remaining_hours < 3 ? 'bg-red-500' : 'bg-blue-500'
-                  }`}
-                  style={{ width: `${Math.min(100, (status.lightning_remaining_hours / 22) * 100)}%` }}
-                />
-              </div>
-              <span
-                className={`text-xs font-medium ${
-                  status.lightning_remaining_hours < 3 ? 'text-red-600' : 'text-gray-700'
-                }`}
-              >
-                {status.lightning_remaining_hours.toFixed(1)} h
-              </span>
-            </>
-          ) : (
-            <span className="text-xs text-gray-400">無資料</span>
-          )}
-        </div>
-
-        {/* Kaggle Poller */}
-        <div>
-          <div className="text-xs text-gray-500 mb-1">Kaggle Poller 最後執行</div>
-          <span className={`text-xs font-medium ${kagglePoller.color}`}>
-            {kagglePoller.label}
-          </span>
-        </div>
-
-        {/* Lightning Poller */}
-        <div>
-          <div className="text-xs text-gray-500 mb-1">Lightning Poller 最後執行</div>
-          <span className={`text-xs font-medium ${lightningPoller.color}`}>
-            {lightningPoller.label}
-          </span>
-        </div>
-      </div>
     </div>
   )
 }

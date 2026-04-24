@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { submissionsApi, registryApi, type Submission, type SubmissionHistoryItem } from '../api/client'
@@ -52,6 +52,8 @@ export default function SubmissionDetailPage() {
   const [kernelVersion, setKernelVersion] = useState('')
   const [showRejectModal, setShowRejectModal] = useState(false)
   const [showEditFields, setShowEditFields] = useState(false)
+  const [successMsg, setSuccessMsg] = useState('')
+  const [expandedVersionId, setExpandedVersionId] = useState<number | null>(null)
   const [editFields, setEditFields] = useState({
     class_list: '',
     dataset_count: '',
@@ -60,6 +62,13 @@ export default function SubmissionDetailPage() {
     dataset_source: '',
     kaggle_dataset_url: '',
   })
+
+  // F-12: success banner 自動消失
+  useEffect(() => {
+    if (!successMsg) return
+    const t = setTimeout(() => setSuccessMsg(''), 3000)
+    return () => clearTimeout(t)
+  }, [successMsg])
 
   const { data: sub, isLoading } = useQuery({
     queryKey: ['submission', req_no],
@@ -87,12 +96,13 @@ export default function SubmissionDetailPage() {
   const actionMut = useMutation({
     mutationFn: ({ action, note }: { action: string; note?: string }) =>
       submissionsApi.action(req_no!, action, { note }),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: ['submission', req_no] })
       qc.invalidateQueries({ queryKey: ['submissions'] })
       qc.invalidateQueries({ queryKey: ['stats'] })
       setNoteInput('')
       setActionError('')
+      setSuccessMsg(`操作「${variables.action}」已完成`)
     },
     onError: (err: unknown) => {
       const msg =
@@ -111,6 +121,7 @@ export default function SubmissionDetailPage() {
       qc.invalidateQueries({ queryKey: ['stats'] })
       setShowRejectModal(false)
       setActionError('')
+      setSuccessMsg('退件完成')
     },
     onError: (err: unknown) => {
       const msg =
@@ -158,6 +169,7 @@ export default function SubmissionDetailPage() {
       qc.invalidateQueries({ queryKey: ['submissions'] })
       qc.invalidateQueries({ queryKey: ['stats'] })
       setActionError('')
+      setSuccessMsg('Lightning 重送已啟動')
     },
     onError: (err: unknown) => {
       const msg =
@@ -212,6 +224,13 @@ export default function SubmissionDetailPage() {
 
   return (
     <div className="max-w-3xl">
+      {/* F-12: success banner */}
+      {successMsg && (
+        <div className="mb-4 bg-green-50 border border-green-300 text-green-700 text-sm rounded px-4 py-2 flex items-center gap-2">
+          <span className="font-medium">完成</span>
+          <span>{successMsg}</span>
+        </div>
+      )}
       <div className="flex items-center gap-3 mb-6 flex-wrap">
         <Link to="/" className="text-gray-400 hover:text-gray-600 text-sm">← 返回列表</Link>
         <span className="text-gray-300">/</span>
@@ -487,35 +506,74 @@ export default function SubmissionDetailPage() {
                     <th className="text-left px-3 py-2 text-gray-500 font-medium">訓練日期</th>
                     <th className="text-left px-3 py-2 text-gray-500 font-medium">mAP50</th>
                     <th className="text-left px-3 py-2 text-gray-500 font-medium">Pass/Fail</th>
+                    <th className="text-left px-3 py-2 text-gray-500 font-medium">Dataset Snapshot</th>
+                    <th className="text-left px-3 py-2 text-gray-500 font-medium">Commit Hash</th>
                     <th className="text-left px-3 py-2 text-gray-500 font-medium">狀態</th>
                     <th className="text-left px-3 py-2 text-gray-500 font-medium">驗收</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
                   {versions.map((v) => (
-                    <tr key={v.id} className="hover:bg-gray-50">
-                      <td className="px-3 py-2 font-mono">{v.version}</td>
-                      <td className="px-3 py-2 text-gray-500">{v.train_date || '-'}</td>
-                      <td className="px-3 py-2">{v.map50_actual ?? v.map50 ?? '-'}</td>
-                      <td className="px-3 py-2">
-                        {v.pass_fail ? (
-                          <span className={`text-xs font-bold ${
-                            v.pass_fail === 'pass' ? 'text-green-600' : 'text-red-600'
-                          }`}>
-                            {v.pass_fail.toUpperCase()}
-                          </span>
-                        ) : '-'}
-                      </td>
-                      <td className="px-3 py-2"><StatusBadge status={v.status} /></td>
-                      <td className="px-3 py-2">
-                        <Link
-                          to={`/registry/${v.id}/accept`}
-                          className="text-indigo-600 text-xs hover:underline"
-                        >
-                          驗收
-                        </Link>
-                      </td>
-                    </tr>
+                    <>
+                      <tr key={v.id} className="hover:bg-gray-50">
+                        <td className="px-3 py-2 font-mono">{v.version}</td>
+                        <td className="px-3 py-2 text-gray-500">{v.train_date || '-'}</td>
+                        <td className="px-3 py-2">{v.map50_actual ?? v.map50 ?? '-'}</td>
+                        <td className="px-3 py-2">
+                          {v.pass_fail ? (
+                            <span className={`text-xs font-bold ${
+                              v.pass_fail === 'pass' ? 'text-green-600' : 'text-red-600'
+                            }`}>
+                              {v.pass_fail.toUpperCase()}
+                            </span>
+                          ) : '-'}
+                        </td>
+                        <td className="px-3 py-2 font-mono text-xs text-gray-500">
+                          {v.dataset_snapshot_id || <span className="text-gray-300">-</span>}
+                        </td>
+                        <td className="px-3 py-2">
+                          {v.train_commit_hash ? (
+                            <span
+                              className="font-mono text-xs text-gray-600 cursor-pointer hover:text-indigo-600"
+                              title={v.train_commit_hash}
+                              onClick={() => navigator.clipboard.writeText(v.train_commit_hash!)}
+                            >
+                              {v.train_commit_hash.slice(0, 8)}
+                              <span className="ml-1 text-gray-300 text-xs">copy</span>
+                            </span>
+                          ) : (
+                            <span className="text-gray-300">-</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2"><StatusBadge status={v.status} /></td>
+                        <td className="px-3 py-2 flex items-center gap-2">
+                          <Link
+                            to={`/registry/${v.id}/accept`}
+                            className="text-indigo-600 text-xs hover:underline"
+                          >
+                            驗收
+                          </Link>
+                          {v.hyperparams_json && (
+                            <button
+                              className="text-xs text-gray-400 hover:text-gray-600 underline"
+                              onClick={() => setExpandedVersionId(expandedVersionId === v.id ? null : v.id)}
+                            >
+                              {expandedVersionId === v.id ? '收起' : '參數'}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                      {expandedVersionId === v.id && v.hyperparams_json && (
+                        <tr key={`${v.id}-params`} className="bg-gray-50">
+                          <td colSpan={8} className="px-4 py-3">
+                            <div className="text-xs text-gray-500 font-medium mb-1">Hyperparameters</div>
+                            <pre className="text-xs text-gray-700 bg-white border rounded p-2 overflow-x-auto">
+                              {JSON.stringify(v.hyperparams_json, null, 2)}
+                            </pre>
+                          </td>
+                        </tr>
+                      )}
+                    </>
                   ))}
                 </tbody>
               </table>

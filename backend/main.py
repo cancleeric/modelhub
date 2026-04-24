@@ -1,8 +1,10 @@
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from routers import submissions, registry, actions, kaggle, api_keys, predict, health, inference, queue as queue_router
 from models import init_db
 from pollers.kaggle_poller import start_scheduler, stop_scheduler
@@ -42,6 +44,16 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="ModelHub", version=VERSION, lifespan=lifespan)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    msgs = "; ".join(
+        f"{'.'.join(str(l) for l in e['loc'] if l != 'body')}: {e['msg']}"
+        for e in exc.errors()
+    )
+    return JSONResponse(status_code=422, content={"detail": msgs})
+
 
 app.add_middleware(
     CORSMiddleware,

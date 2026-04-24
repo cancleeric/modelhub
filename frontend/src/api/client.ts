@@ -158,7 +158,18 @@ export interface ModelVersion {
   accepted_at: string | null
   acceptance_note: string | null
   is_current: boolean | null
+  // P1-3: 追溯性欄位
+  dataset_snapshot_id: string | null
+  train_commit_hash: string | null
+  hyperparams_json: Record<string, unknown> | null
   created_at: string
+}
+
+export interface PaginatedSubmissions {
+  items: Submission[]
+  total: number
+  limit: number
+  offset: number
 }
 
 export interface StatsSummary {
@@ -169,8 +180,8 @@ export interface StatsSummary {
 // --- Submission API ---
 
 export const submissionsApi = {
-  list: (params?: { status?: string; product?: string; dataset_status?: string }) =>
-    api.get<Submission[]>('/api/submissions/', { params }).then((r) => r.data),
+  list: (params?: { status?: string; product?: string; dataset_status?: string; limit?: number; offset?: number }) =>
+    api.get<PaginatedSubmissions>('/api/submissions/', { params }).then((r) => r.data),
 
   get: (req_no: string) =>
     api.get<Submission>(`/api/submissions/${req_no}`).then((r) => r.data),

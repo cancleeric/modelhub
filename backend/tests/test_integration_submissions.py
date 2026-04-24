@@ -266,13 +266,20 @@ class TestSubmissionStateMachine:
         assert resp.json()["req_no"] == req_no
 
     def test_list_submissions(self, app_client):
-        """GET /api/submissions/ → 返回 200（list API 正常回應）"""
+        """GET /api/submissions/ → 返回 PaginatedSubmissions（items/total/limit/offset）"""
         create_and_get_req_no(app_client)
         resp = app_client.get("/api/submissions/")
         # 注意：list 使用 req_no LIKE 過濾 magic string，正常 req_no 不受影響
         assert resp.status_code == 200
-        # 至少 API 可呼叫（items 數量依 filter 行為而定）
-        assert isinstance(resp.json(), list)
+        # B-01: 回傳 paginated 結構
+        data = resp.json()
+        assert isinstance(data, dict)
+        assert "items" in data
+        assert "total" in data
+        assert "limit" in data
+        assert "offset" in data
+        assert isinstance(data["items"], list)
+        assert data["total"] >= len(data["items"])
 
     def test_training_result_invalid_status(self, app_client):
         """PATCH training-result 給非法 status → 422"""
