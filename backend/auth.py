@@ -5,16 +5,21 @@ auth.py — LIDS JWT + API Key 認證
 - X-Api-Key → 先查 DB (api_keys table，Sprint 7.1)，找不到 fallback env bootstrap key
 """
 
+import hashlib
 import logging
 import os
 from datetime import datetime
 from typing import Optional
 
 import httpx
+from cachetools import TTLCache
 from fastapi import Depends, Header, HTTPException, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 logger = logging.getLogger("modelhub.auth")
+
+# P1-2: module-level TTLCache，60 秒有效期，最多 512 個 token
+_TOKEN_CACHE: TTLCache = TTLCache(maxsize=512, ttl=60)
 
 _BOOTSTRAP_KEY_RAW = os.getenv("MODELHUB_API_KEY")
 
@@ -89,7 +94,13 @@ async def _verify_lids_token(token: str) -> dict:
     """
     P1-4: 共用 LIDS token 驗證邏輯。
     成功回傳 userinfo dict，失敗拋 HTTPException(401)。
+    P1-2: 加入 TTLCache，同一 token 60 秒內不重複打 LIDS。
     """
+    key = hashlib.sha256(token.encode()).hexdigest()[:32]
+    if key in _TOKEN_CACHE:
+        logger.debug("_verify_lids_token: cache hit key=%s", key)
+        return _TOKEN_CACHE[key]
+
     async with httpx.AsyncClient(timeout=5.0) as client:
         for url in [LIDS_USERINFO_URL, LIDS_USERINFO_URL_FALLBACK]:
             try:
@@ -98,7 +109,9 @@ async def _verify_lids_token(token: str) -> dict:
                     headers={"Authorization": f"Bearer {token}"},
                 )
                 if resp.status_code == 200:
-                    return resp.json()
+                    userinfo = resp.json()
+                    _TOKEN_CACHE[key] = userinfo
+                    return userinfo
                 # 401/403 直接拒絕，不再 fallback
                 if resp.status_code in (401, 403):
                     raise HTTPException(status_code=401, detail="Invalid or expired token")

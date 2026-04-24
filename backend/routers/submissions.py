@@ -1,11 +1,11 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
-from models import Submission, get_db
+from models import Submission, ModelVersion, get_db
 from auth import CurrentUser, CurrentUserOrApiKey
 
 router = APIRouter()
@@ -184,6 +184,39 @@ class SubmissionCreateResult(BaseModel):
     submission: SubmissionOut
     warnings: list[str] = []
     suggestions: list[str] = []
+
+
+class ModelVersionOut(BaseModel):
+    """P1-3: ModelVersion 查詢 schema，含追溯性欄位"""
+    id: int
+    req_no: str
+    product: str
+    model_name: str
+    version: str
+    train_date: Optional[str] = None
+    map50: Optional[float] = None
+    map50_95: Optional[float] = None
+    map50_actual: Optional[float] = None
+    map50_95_actual: Optional[float] = None
+    file_path: Optional[str] = None
+    status: str
+    notes: Optional[str] = None
+    kaggle_kernel_url: Optional[str] = None
+    epochs: Optional[int] = None
+    batch_size: Optional[int] = None
+    arch: Optional[str] = None
+    pass_fail: Optional[str] = None
+    accepted_by: Optional[str] = None
+    accepted_at: Optional[datetime] = None
+    acceptance_note: Optional[str] = None
+    is_current: Optional[bool] = False
+    # P1-3: 可追溯性欄位
+    dataset_snapshot_id: Optional[str] = None
+    train_commit_hash: Optional[str] = None
+    hyperparams_json: Optional[Dict[str, Any]] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 # ---------------------------------------------------------------------------
@@ -538,3 +571,23 @@ async def delete_submission(
         raise HTTPException(status_code=404, detail="Submission not found")
     db.delete(obj)
     db.commit()
+
+
+# P1-3: ModelVersion 查詢端點（含追溯性欄位）
+@router.get("/{req_no}/model-versions", response_model=List[ModelVersionOut])
+async def list_model_versions(
+    req_no: str,
+    db: Session = Depends(get_db),
+    current_user: dict = CurrentUser,
+):
+    """列出指定需求單的所有 ModelVersion（含 dataset_snapshot_id / train_commit_hash / hyperparams_json）"""
+    obj = db.query(Submission).filter(Submission.req_no == req_no).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    versions = (
+        db.query(ModelVersion)
+        .filter(ModelVersion.req_no == req_no)
+        .order_by(ModelVersion.id.asc())
+        .all()
+    )
+    return versions

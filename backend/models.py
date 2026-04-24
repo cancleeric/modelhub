@@ -1,6 +1,6 @@
 import os
 from datetime import datetime
-from sqlalchemy import Boolean, Column, Integer, String, Float, DateTime, create_engine, text
+from sqlalchemy import Boolean, Column, Integer, String, Float, DateTime, JSON, create_engine, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 # P3-1: 從 env 讀 DATABASE_URL；未設則用 SQLite（向後相容）
@@ -127,6 +127,10 @@ class ModelVersion(Base):
     accepted_at = Column(DateTime, nullable=True)
     acceptance_note = Column(String, nullable=True)
     is_current = Column(Boolean, default=False)
+    # P1-3: 可追溯性欄位
+    dataset_snapshot_id = Column(String(255), nullable=True)   # dataset 版本識別（如 Kaggle dataset id / hash）
+    train_commit_hash = Column(String(40), nullable=True)       # 訓練腳本 Git SHA（36 chars + buffer）
+    hyperparams_json = Column(JSON, nullable=True)              # 完整 hyperparams dict（從 result.json 讀取）
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -218,8 +222,12 @@ _MIGRATIONS = [
     # Sprint 17 P1-4: Lightning Studio 名稱
     ("submissions", "lightning_studio_name",    "VARCHAR"),
     # Sprint 20: 訓練隊列（SQLite 用 create_all 建表，此列僅佔位確保 migration 完整性）
-    # P3-25: updated_at — 最後一筆手動 migration（新 migration 請走 Alembic）
+    # P3-25: updated_at
     ("submissions", "updated_at", "DATETIME"),
+    # P1-3: ModelVersion 可追溯性欄位（最後一筆手動 migration，新 migration 請走 Alembic）
+    ("model_versions", "dataset_snapshot_id", "VARCHAR(255)"),
+    ("model_versions", "train_commit_hash",    "VARCHAR(40)"),
+    ("model_versions", "hyperparams_json",     "TEXT"),
 ]
 
 

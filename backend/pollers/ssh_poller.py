@@ -139,6 +139,19 @@ def _on_ssh_complete(db: Session, sub: Submission, host: str, launcher) -> None:
         except Exception:
             pass
 
+    # P1-3: 從 result.json 讀取追溯性欄位（若無則寫 None）
+    # TODO: training 腳本應在 result.json 補上 dataset_snapshot_id / train_commit_hash / hyperparams
+    result_json_path = str(Path(dest_dir) / "result.json")
+    result_data: dict = {}
+    try:
+        with open(result_json_path) as _f:
+            result_data = json.load(_f)
+    except Exception:
+        pass
+    dataset_snapshot_id = result_data.get("dataset_snapshot_id")
+    train_commit_hash = result_data.get("train_commit_hash")
+    hyperparams_json = result_data.get("hyperparams")  # dict or None
+
     next_ver = _next_version_for(db, sub.req_no)
     mv = ModelVersion(
         req_no=sub.req_no,
@@ -155,6 +168,9 @@ def _on_ssh_complete(db: Session, sub: Submission, host: str, launcher) -> None:
         arch=sub.arch,
         status="pending_acceptance",
         notes=f"auto-filled by ssh-poller at {now.isoformat()}",
+        dataset_snapshot_id=dataset_snapshot_id,
+        train_commit_hash=train_commit_hash,
+        hyperparams_json=hyperparams_json,
     )
     db.add(mv)
 

@@ -30,6 +30,8 @@ KAGGLE_POLLER_STALE_MINUTES = int(os.environ.get("KAGGLE_POLLER_STALE_MINUTES", 
 LIGHTNING_POLLER_STALE_MINUTES = int(os.environ.get("LIGHTNING_POLLER_STALE_MINUTES", "15"))
 TRAINING_STUCK_HOURS = int(os.environ.get("TRAINING_STUCK_HOURS", "30"))
 QUEUE_WARN_WAITING_COUNT = int(os.environ.get("QUEUE_WARN_WAITING_COUNT", "5"))
+# P1-4: stuck watchdog 自動 fail 開關（預設 true；dev 可設為 false 避免誤觸）
+STUCK_AUTO_FAIL_ENABLED = os.environ.get("STUCK_AUTO_FAIL_ENABLED", "true").lower() == "true"
 
 _scheduler = None
 _last_check_at: Optional[datetime] = None
@@ -172,7 +174,7 @@ async def _check_lightning_poller(db) -> None:
 
 
 async def _check_stuck_trainings(db) -> None:
-    """5. training 任務卡頓 > 30 小時 → notify CTO（每任務獨立節流）"""
+    """5. training 任務卡頓 > 30 小時 → 自動 mark_failed + notify CTO（每任務獨立節流）"""
     try:
         cutoff = datetime.utcnow() - timedelta(hours=TRAINING_STUCK_HOURS)
         stuck = (
@@ -189,10 +191,46 @@ async def _check_stuck_trainings(db) -> None:
             if _throttle_key(alert_type):
                 continue
             elapsed_h = (datetime.utcnow() - sub.training_started_at).total_seconds() / 3600
-            note = f"訓練任務 {sub.req_no} 已卡頓 {elapsed_h:.1f}h（閾值 {TRAINING_STUCK_HOURS}h）"
-            _record_alert(db, alert_type, note, {"req_no": sub.req_no, "elapsed_hours": elapsed_h})
-            await _notify_cto(f"[ModelHub Health] {note}")
-            logger.warning("health_check: stuck training req=%s elapsed=%.1fh", sub.req_no, elapsed_h)
+
+            # P1-4: STUCK_AUTO_FAIL_ENABLED → 自動 mark_failed，不只發通知
+            if STUCK_AUTO_FAIL_ENABLED:
+                error_msg = f"stuck auto-failed after {elapsed_h:.1f}h (threshold={TRAINING_STUCK_HOURS}h)"
+                sub.status = "failed"
+                sub.error_message = error_msg if hasattr(sub, "error_message") else None
+
+                # 呼叫 QueueManager.mark_failed_by_req
+                try:
+                    from queue_manager import QueueManager
+                    QueueManager.mark_failed_by_req(db, sub.req_no, reason="stuck auto-failed")
+                except Exception as _qe:
+                    logger.warning("_check_stuck_trainings: queue mark_failed failed for %s: %s", sub.req_no, _qe)
+
+                # 寫 SubmissionHistory
+                _record_alert(
+                    db, alert_type,
+                    f"訓練任務 {sub.req_no} 已卡頓 {elapsed_h:.1f}h，自動標記失敗",
+                    {"req_no": sub.req_no, "elapsed_hours": elapsed_h, "action": "auto_failed"},
+                )
+                row = SubmissionHistory(
+                    req_no=sub.req_no,
+                    action="stuck_auto_failed",
+                    actor="health-checker",
+                    note=error_msg,
+                    meta=json.dumps({"elapsed_hours": elapsed_h, "threshold_hours": TRAINING_STUCK_HOURS},
+                                    ensure_ascii=False),
+                )
+                db.add(row)
+                db.commit()
+
+                note = f"訓練任務 {sub.req_no} 已卡頓 {elapsed_h:.1f}h，已自動標記失敗（閾值 {TRAINING_STUCK_HOURS}h）"
+                await _notify_cto(f"[ModelHub Health] {note}（已自動處理）")
+                logger.warning("health_check: stuck_auto_failed req=%s elapsed=%.1fh", sub.req_no, elapsed_h)
+            else:
+                # STUCK_AUTO_FAIL_ENABLED=false：僅通知，不動作（舊行為）
+                note = f"訓練任務 {sub.req_no} 已卡頓 {elapsed_h:.1f}h（閾值 {TRAINING_STUCK_HOURS}h）"
+                _record_alert(db, alert_type, note, {"req_no": sub.req_no, "elapsed_hours": elapsed_h})
+                await _notify_cto(f"[ModelHub Health] {note}")
+                logger.warning("health_check: stuck training req=%s elapsed=%.1fh", sub.req_no, elapsed_h)
     except Exception as e:
         logger.warning("health_check: stuck training check failed: %s", e)
 
