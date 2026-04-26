@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { submissionsApi, api } from '../api/client'
 import StatusBadge from '../components/StatusBadge'
+import { KpiCard } from '../design-system/KpiCard'
+import { SkeletonKpiCard } from '../design-system/Skeleton'
 
 interface QueueWaitingItem {
   req_no: string
@@ -126,47 +128,29 @@ export default function SubmissionListPage() {
         </Link>
       </div>
 
-      {/* Summary Cards — F-04: 顯示篩選後件數 */}
-      {statsCards && (
-        <div className="grid grid-cols-4 gap-4 mb-2">
-          <div className="bg-white rounded shadow-sm p-4 flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-yellow-100 flex items-center justify-center text-yellow-600 font-bold text-lg">
-              {statsCards.pending}
-            </div>
-            <div>
-              <div className="text-sm text-gray-500">待審</div>
-              <div className="text-xs text-gray-400">submitted 狀態</div>
-            </div>
-          </div>
-          <div className="bg-white rounded shadow-sm p-4 flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold text-lg">
-              {statsCards.training}
-            </div>
-            <div>
-              <div className="text-sm text-gray-500">訓練中</div>
-              <div className="text-xs text-gray-400">training 狀態</div>
-            </div>
-          </div>
-          <div className="bg-white rounded shadow-sm p-4 flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center text-green-600 font-bold text-lg">
-              {statsCards.approvedThisWeek}
-            </div>
-            <div>
-              <div className="text-sm text-gray-500">本週核准</div>
-              <div className="text-xs text-gray-400">approved，本週建立</div>
-            </div>
-          </div>
-          <div className="bg-white rounded shadow-sm p-4 flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center text-purple-600 font-bold text-base">
-              {statsCards.totalGpuHours}h
-            </div>
-            <div>
-              <div className="text-sm text-gray-500">累計 GPU</div>
-              <div className="text-xs text-gray-400">估算 ${statsCards.totalCost.toFixed(2)}</div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Summary Cards — F-04: 矩形 KpiCard（M4），isLoading 顯示 Skeleton */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-2">
+        {isLoading ? (
+          <>
+            <SkeletonKpiCard />
+            <SkeletonKpiCard />
+            <SkeletonKpiCard />
+            <SkeletonKpiCard />
+          </>
+        ) : statsCards ? (
+          <>
+            <KpiCard label="待審" value={statsCards.pending} sub="submitted 狀態" tone="amber" />
+            <KpiCard label="訓練中" value={statsCards.training} sub="training 狀態" tone="blue" />
+            <KpiCard label="本週核准" value={statsCards.approvedThisWeek} sub="approved，本週建立" tone="green" />
+            <KpiCard
+              label="累計 GPU"
+              value={`${statsCards.totalGpuHours}h`}
+              sub={`估算 $${statsCards.totalCost.toFixed(2)}`}
+              tone="purple"
+            />
+          </>
+        ) : null}
+      </div>
       {/* F-04: 篩選結果提示 */}
       {data && (
         <div className="text-xs text-gray-400 mb-4 pl-1">
@@ -220,7 +204,6 @@ export default function SubmissionListPage() {
       </div>
 
       {/* Table */}
-      {isLoading && <p className="text-gray-500">載入中...</p>}
       {error && <p className="text-red-500">載入失敗</p>}
       {filteredData && (
         <div className="bg-white rounded shadow overflow-x-auto">

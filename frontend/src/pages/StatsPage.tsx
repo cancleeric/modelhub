@@ -13,6 +13,8 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 import { submissionsApi, registryApi, type Submission, type ModelVersion } from '../api/client'
+import { KpiCard } from '../design-system/KpiCard'
+import { SkeletonKpiCard } from '../design-system/Skeleton'
 
 function startOfMonth(): Date {
   const d = new Date()
@@ -207,9 +209,7 @@ export default function StatsPage() {
     })
   }, [subs, versions])
 
-  if (!subsData || !versions) {
-    return <p className="text-gray-500">載入中...</p>
-  }
+  const isLoading = !subsData || !versions
 
   return (
     <div>
@@ -219,30 +219,38 @@ export default function StatsPage() {
       <ResourceHealthWidget />
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-        <KpiCard label="本月新增" value={stats.monthSubs} sub="needs submitted" tone="indigo" />
-        <KpiCard label="本月訓練完成" value={stats.monthTrained} sub="training → trained" tone="blue" />
-        <KpiCard label="本月驗收通過" value={stats.monthAccepted} sub="model accepted" tone="green" />
-        <KpiCard
-          label="平均交期"
-          value={stats.avgLeadHours != null ? `${stats.avgLeadHours.toFixed(1)}h` : '-'}
-          sub="submit → accept"
-          tone="purple"
-        />
-        <KpiCard
-          label="累計 GPU"
-          value={`${Math.floor(stats.totalGpuSec / 3600)}h`}
-          sub={`估算 $${stats.totalCost.toFixed(2)}`}
-          tone="amber"
-        />
-        <KpiCard label="總需求單" value={stats.totalSubs} sub="all time" tone="slate" />
-        <KpiCard label="模型版本" value={stats.totalVersions} sub={`當前 ${stats.currentCount} 個`} tone="slate" />
-        <KpiCard label="活躍狀態" value={Object.keys(stats.byStatus).length} sub="status kinds" tone="slate" />
-        <KpiCard
-          label="驗收通過率"
-          value={stats.passRate != null ? `${stats.passRate.toFixed(1)}%` : '-'}
-          sub="accepted / (accepted + failed)"
-          tone="green"
-        />
+        {isLoading ? (
+          <>
+            {Array.from({ length: 9 }).map((_, i) => <SkeletonKpiCard key={i} />)}
+          </>
+        ) : (
+          <>
+            <KpiCard label="本月新增" value={stats.monthSubs} sub="needs submitted" tone="indigo" />
+            <KpiCard label="本月訓練完成" value={stats.monthTrained} sub="training → trained" tone="blue" />
+            <KpiCard label="本月驗收通過" value={stats.monthAccepted} sub="model accepted" tone="green" />
+            <KpiCard
+              label="平均交期"
+              value={stats.avgLeadHours != null ? `${stats.avgLeadHours.toFixed(1)}h` : '-'}
+              sub="submit → accept"
+              tone="purple"
+            />
+            <KpiCard
+              label="累計 GPU"
+              value={`${Math.floor(stats.totalGpuSec / 3600)}h`}
+              sub={`估算 $${stats.totalCost.toFixed(2)}`}
+              tone="amber"
+            />
+            <KpiCard label="總需求單" value={stats.totalSubs} sub="all time" tone="slate" />
+            <KpiCard label="模型版本" value={stats.totalVersions} sub={`當前 ${stats.currentCount} 個`} tone="slate" />
+            <KpiCard label="活躍狀態" value={Object.keys(stats.byStatus).length} sub="status kinds" tone="slate" />
+            <KpiCard
+              label="驗收通過率"
+              value={stats.passRate != null ? `${stats.passRate.toFixed(1)}%` : '-'}
+              sub="accepted / (accepted + failed)"
+              tone="green"
+            />
+          </>
+        )}
       </div>
 
       {/* P2-5: 近 12 週趨勢折線圖 */}
@@ -318,27 +326,6 @@ export default function StatsPage() {
   )
 }
 
-function KpiCard({
-  label, value, sub, tone,
-}: { label: string; value: number | string; sub: string; tone: string }) {
-  const toneMap: Record<string, string> = {
-    indigo: 'bg-indigo-100 text-indigo-700',
-    blue:   'bg-blue-100 text-blue-700',
-    green:  'bg-green-100 text-green-700',
-    purple: 'bg-purple-100 text-purple-700',
-    amber:  'bg-amber-100 text-amber-700',
-    slate:  'bg-slate-100 text-slate-700',
-  }
-  return (
-    <div className="bg-white rounded shadow-sm p-4">
-      <div className={`inline-block text-xs font-medium px-2 py-0.5 rounded ${toneMap[tone]}`}>
-        {label}
-      </div>
-      <div className="text-2xl font-bold text-gray-900 mt-2">{value}</div>
-      <div className="text-xs text-gray-500 mt-0.5">{sub}</div>
-    </div>
-  )
-}
 
 function QuotaCard({
   title,
