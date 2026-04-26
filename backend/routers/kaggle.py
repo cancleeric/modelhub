@@ -58,12 +58,32 @@ async def attach_kernel(
     ))
     db.commit()
     db.refresh(obj)
+
+    # Race condition fix：若 queue entry 因 kernel 未 attach 而停在 pending_kernel，
+    # 重設為 waiting 讓 dispatcher 下次可正常派發。
+    queue_reset = False
+    try:
+        from queue_manager import QueueManager
+        from models import SessionLocal as _SessionLocal
+        _qdb = _SessionLocal()
+        try:
+            queue_reset = QueueManager.reset_pending_kernel(_qdb, req_no)
+            _qdb.commit()
+        finally:
+            _qdb.close()
+    except Exception as _qe:
+        import logging as _logging
+        _logging.getLogger("modelhub.routers.kaggle").warning(
+            "attach_kernel: reset_pending_kernel failed for req=%s: %s", req_no, _qe
+        )
+
     return {
         "req_no": req_no,
         "kaggle_kernel_slug": obj.kaggle_kernel_slug,
         "kaggle_kernel_version": obj.kaggle_kernel_version,
         "status": obj.status,
         "kaggle_status": obj.kaggle_status,
+        "queue_reset_to_waiting": queue_reset,
     }
 
 

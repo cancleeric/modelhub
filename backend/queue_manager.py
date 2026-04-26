@@ -132,6 +132,40 @@ class QueueManager:
             db.flush()
 
     @staticmethod
+    def mark_pending_kernel(db: Session, entry_id: int) -> None:
+        """
+        將條目標記為 pending_kernel。
+        發生於 queue_dispatcher 偵測到 kaggle_kernel_slug 尚未 attach 時，
+        避免誤判無 GPU 資源而進入 blocked。
+        attach-kernel 完成後需呼叫 reset_pending_kernel 恢復為 waiting。
+        """
+        entry = db.query(TrainingQueue).filter(TrainingQueue.id == entry_id).first()
+        if not entry:
+            logger.warning("mark_pending_kernel: entry_id=%d not found", entry_id)
+            return
+        entry.status = "pending_kernel"
+        db.flush()
+
+    @staticmethod
+    def reset_pending_kernel(db: Session, req_no: str) -> bool:
+        """
+        將 pending_kernel 狀態的條目重設為 waiting，讓 dispatcher 下次重試。
+        由 attach-kernel endpoint 在成功 attach 後呼叫。
+        回傳 True 表示有條目被重設，False 表示無對應 pending_kernel 條目。
+        """
+        entry = (
+            db.query(TrainingQueue)
+            .filter(TrainingQueue.req_no == req_no, TrainingQueue.status == "pending_kernel")
+            .first()
+        )
+        if not entry:
+            return False
+        entry.status = "waiting"
+        db.flush()
+        logger.info("reset_pending_kernel: req=%s entry_id=%d → waiting", req_no, entry.id)
+        return True
+
+    @staticmethod
     def count_running(db: Session) -> int:
         """回傳當前 running + dispatching 條目數量"""
         return (

@@ -89,6 +89,18 @@ def dispatch_next() -> dict:
             db.commit()
             logger.info("dispatch_next: req=%s dispatched to %s", req_no, resource)
             return {"dispatched": req_no, "resource": resource}
+        elif resource == "PENDING_KERNEL":
+            # Race condition：Kaggle 為最佳資源但 kernel 尚未 attach
+            # 標記為 pending_kernel，讓 attach-kernel endpoint 完成後重置為 waiting
+            QueueManager.mark_pending_kernel(db, entry_id)
+            _append_history(db, req_no, "queue_pending_kernel",
+                            note="Kaggle kernel 尚未 attach，等待 attach-kernel 後自動重試",
+                            meta={"entry_id": entry_id})
+            db.commit()
+            logger.info(
+                "dispatch_next: req=%s pending_kernel (kernel not yet attached)", req_no
+            )
+            return {"pending_kernel": req_no, "reason": reason}
         else:
             QueueManager.mark_failed(db, entry_id, reason)
             _append_history(db, req_no, "queue_dispatch_failed",
@@ -109,6 +121,12 @@ def _do_dispatch(req_no: str, db) -> tuple[bool, str, str]:
     """
     實際派發訓練任務，與 actions._handle_start_training_resource_bg 邏輯一致。
     回傳 (success: bool, resource: str, reason: str)
+
+    Race condition 防護（fix/queue-dispatcher-kernel-race）：
+    在推進狀態前先確認資源可行性。若 Kaggle 為最佳資源但
+    kaggle_kernel_slug 尚未 attach，回傳特殊 sentinel
+    "PENDING_KERNEL" 讓呼叫端改設 pending_kernel 狀態，
+    避免誤走 local fallback 或觸發 blocked。
     """
     import json as _json
     from datetime import datetime as _dt
@@ -118,6 +136,28 @@ def _do_dispatch(req_no: str, db) -> tuple[bool, str, str]:
         return False, "", f"submission {req_no} not found"
     if obj.status != "approved":
         return False, "", f"status={obj.status} (expected approved)"
+
+    # --- Kernel attach 前置檢查（race condition fix）---
+    # 若 ResourceProber 判定使用 Kaggle 但 kaggle_kernel_slug 尚未設定，
+    # 不推進到 training，改回傳 PENDING_KERNEL sentinel，
+    # 由 dispatch_next 負責標記 pending_kernel 並等待 attach-kernel 完成。
+    try:
+        from resources.prober import ResourceProber
+        _prober = ResourceProber()
+        _best = _prober.get_best_resource(db=db)
+        _resource_hint = _best.get("resource", "local")
+        if _resource_hint == "kaggle" and not obj.kaggle_kernel_slug:
+            logger.info(
+                "_do_dispatch: req=%s kaggle selected but kernel not yet attached, "
+                "returning PENDING_KERNEL",
+                req_no,
+            )
+            return False, "PENDING_KERNEL", "kaggle_kernel_slug not set"
+    except Exception as _probe_err:
+        logger.warning(
+            "_do_dispatch: ResourceProber failed for req=%s (%s), proceeding with dispatch",
+            req_no, _probe_err,
+        )
 
     now = _dt.utcnow()
     obj.status = "training"
