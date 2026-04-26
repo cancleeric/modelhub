@@ -60,12 +60,11 @@ test.describe('模型清冊與驗收流程', () => {
     await injectToken(page)
     await page.goto(`${BASE}/registry`)
 
-    // 應顯示模型版本
+    // 應顯示模型版本（主表格顯示 model/version/status/date/action 5 欄，mAP50 移至抽屜）
     await expect(page.locator('text=pid-symbol-v1')).toBeVisible({ timeout: 5000 })
     await expect(page.locator('text=v1.0')).toBeVisible()
-    await expect(page.locator('text=0.87')).toBeVisible()
 
-    // 點擊驗收連結
+    // 點擊驗收連結（status=pending_acceptance 在操作欄顯示驗收 link）
     const acceptLink = page.locator('a[href*="/accept"]').first()
     await expect(acceptLink).toBeVisible()
   })

@@ -1,10 +1,12 @@
 import { useState, useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { submissionsApi, api } from '../api/client'
 import StatusBadge from '../components/StatusBadge'
 import { KpiCard } from '../design-system/KpiCard'
 import { SkeletonKpiCard } from '../design-system/Skeleton'
+import { EmptyState } from '../design-system/EmptyState'
+import { FileText } from 'lucide-react'
 
 interface QueueWaitingItem {
   req_no: string
@@ -37,8 +39,8 @@ const PRIORITY_OPTIONS = ['', 'P0', 'P1', 'P2', 'P3']
 
 function getStartOfWeek(): Date {
   const now = new Date()
-  const day = now.getDay() // 0=Sun
-  const diff = now.getDate() - day + (day === 0 ? -6 : 1) // Mon
+  const day = now.getDay()
+  const diff = now.getDate() - day + (day === 0 ? -6 : 1)
   const mon = new Date(now)
   mon.setDate(diff)
   mon.setHours(0, 0, 0, 0)
@@ -60,6 +62,7 @@ const DATASET_STATUS_COLOR: Record<string, string> = {
 }
 
 export default function SubmissionListPage() {
+  const navigate = useNavigate()
   const [statusFilter, setStatusFilter] = useState('')
   const [priorityFilter, setPriorityFilter] = useState('')
   const [productFilter, setProductFilter] = useState('')
@@ -122,7 +125,7 @@ export default function SubmissionListPage() {
         <h1 className="text-2xl font-bold text-gray-900">訓練需求單列表</h1>
         <Link
           to="/submit"
-          className="bg-indigo-600 text-white text-sm px-4 py-2 rounded hover:bg-indigo-700"
+          className="bg-indigo-600 text-white text-sm px-4 py-2 rounded-lg hover:bg-indigo-700"
         >
           + 新增需求單
         </Link>
@@ -151,6 +154,7 @@ export default function SubmissionListPage() {
           </>
         ) : null}
       </div>
+
       {/* F-04: 篩選結果提示 */}
       {data && (
         <div className="text-xs text-gray-400 mb-4 pl-1">
@@ -164,7 +168,7 @@ export default function SubmissionListPage() {
       {/* Filters */}
       <div className="flex gap-3 mb-4 flex-wrap">
         <select
-          className="border rounded px-3 py-1.5 text-sm bg-white"
+          className="border rounded-md px-3 py-1.5 text-sm bg-white"
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
         >
@@ -174,7 +178,7 @@ export default function SubmissionListPage() {
           ))}
         </select>
         <select
-          className="border rounded px-3 py-1.5 text-sm bg-white"
+          className="border rounded-md px-3 py-1.5 text-sm bg-white"
           value={priorityFilter}
           onChange={(e) => setPriorityFilter(e.target.value)}
         >
@@ -186,12 +190,12 @@ export default function SubmissionListPage() {
         <input
           type="text"
           placeholder="Product 篩選..."
-          className="border rounded px-3 py-1.5 text-sm"
+          className="border rounded-md px-3 py-1.5 text-sm"
           value={productFilter}
           onChange={(e) => setProductFilter(e.target.value)}
         />
         <select
-          className="border rounded px-3 py-1.5 text-sm bg-white"
+          className="border rounded-md px-3 py-1.5 text-sm bg-white"
           value={datasetFilter}
           onChange={(e) => setDatasetFilter(e.target.value)}
         >
@@ -205,24 +209,24 @@ export default function SubmissionListPage() {
 
       {/* Table */}
       {error && <p className="text-red-500">載入失敗</p>}
-      {filteredData && (
-        <div className="bg-white rounded shadow overflow-x-auto">
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-x-auto">
+        {filteredData && filteredData.length > 0 ? (
           <table className="min-w-full text-sm">
-            <thead className="bg-gray-50 border-b">
+            <thead className="bg-gray-50 border-b border-gray-100">
               <tr>
-                <th className="text-left px-4 py-3 text-gray-600 font-medium">需求單號</th>
-                <th className="text-left px-4 py-3 text-gray-600 font-medium">名稱</th>
-                <th className="text-left px-4 py-3 text-gray-600 font-medium">產品</th>
-                <th className="text-left px-4 py-3 text-gray-600 font-medium">提交人</th>
-                <th className="text-left px-4 py-3 text-gray-600 font-medium">狀態</th>
-                <th className="text-left px-4 py-3 text-gray-600 font-medium">資料集</th>
-                <th className="text-left px-4 py-3 text-gray-600 font-medium">優先</th>
-                <th className="text-left px-4 py-3 text-gray-600 font-medium">建立時間</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium text-xs uppercase tracking-wide">需求單號</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium text-xs uppercase tracking-wide">名稱</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium text-xs uppercase tracking-wide">產品</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium text-xs uppercase tracking-wide">提交人</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium text-xs uppercase tracking-wide">狀態</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium text-xs uppercase tracking-wide">資料集</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium text-xs uppercase tracking-wide">優先</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium text-xs uppercase tracking-wide">建立時間</th>
               </tr>
             </thead>
-            <tbody className="divide-y">
+            <tbody className="divide-y divide-gray-50">
               {filteredData.map((s) => (
-                <tr key={s.req_no} className="hover:bg-gray-50">
+                <tr key={s.req_no} className="hover:bg-indigo-50/30 transition-colors">
                   <td className="px-4 py-3">
                     <Link
                       to={`/submissions/${s.req_no}`}
@@ -288,17 +292,17 @@ export default function SubmissionListPage() {
                   </td>
                 </tr>
               ))}
-              {filteredData.length === 0 && (
-                <tr>
-                  <td colSpan={8} className="text-center py-8 text-gray-400">
-                    無資料
-                  </td>
-                </tr>
-              )}
             </tbody>
           </table>
-        </div>
-      )}
+        ) : !isLoading ? (
+          <EmptyState
+            title="尚無需求單"
+            description="點擊「新增需求單」建立第一份訓練需求"
+            Icon={FileText}
+            action={{ label: '+ 新增需求單', onClick: () => navigate('/submit') }}
+          />
+        ) : null}
+      </div>
     </div>
   )
 }

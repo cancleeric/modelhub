@@ -253,75 +253,57 @@ export default function StatsPage() {
         )}
       </div>
 
-      {/* P2-5: 近 12 週趨勢折線圖 */}
-      <div className="bg-white rounded shadow p-5 mb-6">
-        <h3 className="text-sm font-semibold text-gray-700 mb-4">近 12 週趨勢</h3>
-        <ResponsiveContainer width="100%" height={280}>
-          <LineChart data={weeklyTrend} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-            <XAxis dataKey="week" tick={{ fontSize: 12 }} />
-            <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
-            <Tooltip />
-            <Legend />
-            <Line
-              type="monotone"
-              dataKey="新增工單"
-              stroke="#6366f1"
-              strokeWidth={2}
-              dot={{ r: 3 }}
-              activeDot={{ r: 5 }}
-            />
-            <Line
-              type="monotone"
-              dataKey="訓練完成"
-              stroke="#3b82f6"
-              strokeWidth={2}
-              dot={{ r: 3 }}
-              activeDot={{ r: 5 }}
-            />
-            <Line
-              type="monotone"
-              dataKey="驗收通過"
-              stroke="#10b981"
-              strokeWidth={2}
-              dot={{ r: 3 }}
-              activeDot={{ r: 5 }}
-            />
-          </LineChart>
-        </ResponsiveContainer>
+      {/* M5: 2 欄 grid — 左：KPI 折線、右：Bar + 配額 */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        {/* 左欄：趨勢折線圖 */}
+        <div className="bg-white rounded-xl border border-gray-100 p-5" style={{ boxShadow: '0 1px 3px rgba(0,0,0,.08)' }}>
+          <h3 className="text-sm font-semibold text-gray-700 mb-4">近 12 週趨勢</h3>
+          <ResponsiveContainer width="100%" height={240}>
+            <LineChart data={weeklyTrend} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <XAxis dataKey="week" tick={{ fontSize: 12 }} />
+              <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
+              <Tooltip />
+              <Legend />
+              <Line type="monotone" dataKey="新增工單" stroke="#6366f1" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+              <Line type="monotone" dataKey="訓練完成" stroke="#3b82f6" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+              <Line type="monotone" dataKey="驗收通過" stroke="#10b981" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* 右欄：Bar 分布 + 配額 */}
+        <div className="space-y-4">
+          <BarCard title="按產品分布" data={stats.byProduct} />
+          <BarCard title="訓練資源分布" data={stats.resourceDist} />
+          {quota && (
+            <>
+              <QuotaCard
+                title="Kaggle 免費配額（本週）"
+                used={quota.kaggle.used_hours_this_week}
+                limit={quota.kaggle.weekly_limit_hours}
+                remaining={quota.kaggle.remaining_hours_this_week}
+                unit="h/週"
+                warnThreshold={5}
+              />
+              <QuotaCard
+                title="Lightning AI 免費配額（本月）"
+                used={quota.lightning.used_hours_this_month}
+                limit={quota.lightning.monthly_limit_hours}
+                remaining={quota.lightning.remaining_hours_this_month}
+                unit="h/月"
+                warnThreshold={3}
+              />
+            </>
+          )}
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-        <BarCard title="按產品分布" data={stats.byProduct} />
-        <BarCard title="按業務公司分布" data={stats.byCompany} />
-      </div>
-
+      {/* 次要分布（按狀態/公司）— 一行兩欄 */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
         <BarCard title="按狀態分布" data={stats.byStatus} />
-        <BarCard title="訓練資源分布" data={stats.resourceDist} />
+        <BarCard title="按業務公司分布" data={stats.byCompany} />
       </div>
-
-      {/* 資源配額卡片 */}
-      {quota && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-          <QuotaCard
-            title="Kaggle 免費配額（本週）"
-            used={quota.kaggle.used_hours_this_week}
-            limit={quota.kaggle.weekly_limit_hours}
-            remaining={quota.kaggle.remaining_hours_this_week}
-            unit="h/週"
-            warnThreshold={5}
-          />
-          <QuotaCard
-            title="Lightning AI 免費配額（本月）"
-            used={quota.lightning.used_hours_this_month}
-            limit={quota.lightning.monthly_limit_hours}
-            remaining={quota.lightning.remaining_hours_this_month}
-            unit="h/月"
-            warnThreshold={3}
-          />
-        </div>
-      )}
     </div>
   )
 }
