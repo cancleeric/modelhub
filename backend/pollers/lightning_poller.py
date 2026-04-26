@@ -260,6 +260,22 @@ def _process_submission(
             except Exception:
                 pass
 
+        # M16: 提取逐 epoch 訓練曲線
+        if output_dir:
+            try:
+                from utils import extract_epoch_curve as _extract_epoch_curve
+                import json as _json_ec
+                log_text_for_curve = ""
+                if "log_text" in dir():
+                    log_text_for_curve = log_text  # type: ignore
+                epoch_data = _extract_epoch_curve(output_dir, log_text_for_curve)
+                if epoch_data:
+                    submission.epoch_curve = _json_ec.dumps(epoch_data, ensure_ascii=False)
+                    logger.info("_process_submission(lightning): req=%s epoch_curve=%d points",
+                                submission.req_no, len(epoch_data))
+            except Exception as _ec:
+                logger.warning("_process_submission(lightning): epoch_curve failed: %s", _ec)
+
         # 建 ModelVersion（P1-8: 使用共用 _next_version_for）
         from models import ModelVersion as _ModelVersion
 

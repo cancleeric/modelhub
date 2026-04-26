@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from models import SessionLocal, Submission, ModelVersion, SubmissionHistory
 from parsers import parse_training_log
 from notifications import notify_event
-from utils import next_version_for as _next_version_for, read_log_files as _read_log_files
+from utils import next_version_for as _next_version_for, read_log_files as _read_log_files, extract_epoch_curve as _extract_epoch_curve
 
 logger = logging.getLogger("modelhub.poller.ssh")
 
@@ -138,6 +138,17 @@ def _on_ssh_complete(db: Session, sub: Submission, host: str, launcher) -> None:
             sub.per_class_metrics = json.dumps(per_class, ensure_ascii=False)
         except Exception:
             pass
+
+    # M16: 提取逐 epoch 訓練曲線
+    if output_ok:
+        try:
+            epoch_data = _extract_epoch_curve(dest_dir, log_text if 'log_text' in dir() else "")
+            if epoch_data:
+                sub.epoch_curve = json.dumps(epoch_data, ensure_ascii=False)
+                logger.info("_on_ssh_complete: req=%s epoch_curve=%d points",
+                            sub.req_no, len(epoch_data))
+        except Exception as _ec:
+            logger.warning("_on_ssh_complete: epoch_curve failed: %s", _ec)
 
     # P1-3: 從 result.json 讀取追溯性欄位（若無則寫 None）
     # TODO: training 腳本應在 result.json 補上 dataset_snapshot_id / train_commit_hash / hyperparams

@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from models import SessionLocal, Submission, ModelVersion
 from parsers import parse_training_log
 from notifications import notify_event
-from utils import next_version_for as _next_version_for, read_log_files as _read_log_files
+from utils import next_version_for as _next_version_for, read_log_files as _read_log_files, extract_epoch_curve as _extract_epoch_curve
 
 logger = logging.getLogger("modelhub.poller.kaggle")
 
@@ -241,6 +241,17 @@ async def _on_kernel_complete(db: Session, sub: Submission) -> None:
             sub.per_class_metrics = json.dumps(per_class, ensure_ascii=False)
         except Exception:
             pass
+
+    # M16: 提取逐 epoch 訓練曲線，寫入 epoch_curve（results.csv 優先，fallback 用 log_text）
+    if downloaded:
+        try:
+            epoch_data = _extract_epoch_curve(dest, log_text or "")
+            if epoch_data:
+                sub.epoch_curve = json.dumps(epoch_data, ensure_ascii=False)
+                logger.info("_on_kernel_complete: req=%s epoch_curve=%d points",
+                            sub.req_no, len(epoch_data))
+        except Exception as _ec:
+            logger.warning("_on_kernel_complete: epoch_curve extraction failed: %s", _ec)
 
     # 自動計算 pass_fail（依 submission 的 map50_threshold）
     pass_fail: Optional[str] = None

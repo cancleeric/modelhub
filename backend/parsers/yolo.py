@@ -1,9 +1,16 @@
 """YOLO log parser — 抓 mAP50 / mAP50-95 / epochs / best batch size / per-class AP50
+以及逐 epoch 訓練曲線（epoch_data）
 
 Kaggle kernel output 下載的 .log 是 NDJSON 格式（每行為
 {"stream_name":"stdout","time":..,"data":"..."}），需先解碼才能餵給 regex。
 parse_yolo_log 會自動偵測並解碼 NDJSON，再執行 regex 解析。
+
+epoch_data 解析策略（優先序）：
+1. results.csv（YOLOv8 標準輸出，每 epoch 一行，含 train/val loss 和 map 指標）
+2. YOLOv8 stdout 逐 epoch print（格式：Epoch N/N ... mAP50 ...）
 """
+import csv
+import io
 import json
 import re
 
@@ -56,6 +63,134 @@ def _decode_ndjson_log(text: str) -> str:
     return "".join(plain_parts)
 
 
+def parse_results_csv(csv_text: str) -> list[dict]:
+    """
+    解析 YOLOv8 訓練輸出的 results.csv，回傳逐 epoch dict list。
+
+    YOLOv8 results.csv 欄位（含前綴空格）：
+        epoch, train/box_loss, train/cls_loss, train/dfl_loss,
+        metrics/precision(B), metrics/recall(B), metrics/mAP50(B), metrics/mAP50-95(B),
+        val/box_loss, val/cls_loss, val/dfl_loss, lr/pg0, lr/pg1, lr/pg2
+
+    回傳格式：
+        [{"epoch": 1, "train_loss": 0.8, "val_loss": 0.5, "map50": 0.3, "map50_95": 0.15}, ...]
+
+    train_loss = train/box_loss + train/cls_loss（兩項合計，代表訓練總 loss）
+    val_loss   = val/box_loss + val/cls_loss
+    """
+    if not csv_text or not csv_text.strip():
+        return []
+
+    # YOLOv8 results.csv 的欄位名含前綴空格，用 csv.DictReader strip key
+    reader = csv.DictReader(io.StringIO(csv_text))
+    # normalize key：去前後空白
+    epoch_data: list[dict] = []
+    try:
+        for row in reader:
+            norm = {k.strip(): v.strip() for k, v in row.items() if k is not None}
+            epoch_val = norm.get("epoch")
+            if epoch_val is None:
+                continue
+            try:
+                epoch_int = int(float(epoch_val))
+            except (ValueError, TypeError):
+                continue
+
+            def _f(key: str) -> float | None:
+                v = norm.get(key)
+                if v is None:
+                    return None
+                try:
+                    return round(float(v), 6)
+                except (ValueError, TypeError):
+                    return None
+
+            # box_loss + cls_loss 作為簡化 train_loss / val_loss
+            train_box = _f("train/box_loss") or 0.0
+            train_cls = _f("train/cls_loss") or 0.0
+            val_box = _f("val/box_loss") or 0.0
+            val_cls = _f("val/cls_loss") or 0.0
+
+            entry: dict = {
+                "epoch": epoch_int,
+                "train_loss": round(train_box + train_cls, 6),
+                "val_loss": round(val_box + val_cls, 6),
+            }
+            map50 = _f("metrics/mAP50(B)")
+            if map50 is not None:
+                entry["map50"] = map50
+            map50_95 = _f("metrics/mAP50-95(B)")
+            if map50_95 is not None:
+                entry["map50_95"] = map50_95
+            precision = _f("metrics/precision(B)")
+            if precision is not None:
+                entry["precision"] = precision
+            recall = _f("metrics/recall(B)")
+            if recall is not None:
+                entry["recall"] = recall
+
+            epoch_data.append(entry)
+    except Exception:
+        return []
+
+    return epoch_data
+
+
+def _parse_epoch_data_from_stdout(log_text: str) -> list[dict]:
+    """
+    從 YOLOv8 stdout 解析逐 epoch 資料（fallback，results.csv 不存在時使用）。
+
+    YOLOv8 stdout 格式（每 epoch 一行）：
+        Epoch 1/100  box_loss  cls_loss  dfl_loss  Instances  Size
+                       0.800    1.200    1.000        50     640
+        後接一行 val summary：
+        all  N  N  P  R  mAP50  mAP50-95
+
+    此函式只取 Epoch 行 + 對應 val `all` 行，組合成 epoch_data。
+    """
+    epoch_data: list[dict] = []
+
+    # 找所有 "Epoch N/M" 行
+    epoch_pat = re.compile(r"Epoch\s+(\d+)/(\d+)", re.MULTILINE)
+    # 找所有 val `all` 行（final val metrics per epoch）
+    val_pat = re.compile(
+        r"^\s*all\s+\d+\s+\d+\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*$",
+        re.MULTILINE,
+    )
+
+    epoch_matches = list(epoch_pat.finditer(log_text))
+    val_matches = list(val_pat.finditer(log_text))
+
+    if not epoch_matches or not val_matches:
+        return []
+
+    # 為每個 epoch，找其後第一個 val `all` 行
+    val_idx = 0
+    for em in epoch_matches:
+        epoch_num = int(em.group(1))
+        # 跳過已用的 val rows
+        while val_idx < len(val_matches) and val_matches[val_idx].start() < em.start():
+            val_idx += 1
+        if val_idx >= len(val_matches):
+            break
+        vm = val_matches[val_idx]
+        val_idx += 1
+
+        try:
+            entry: dict = {
+                "epoch": epoch_num,
+                "map50": round(float(vm.group(3)), 6),
+                "map50_95": round(float(vm.group(4)), 6),
+                "precision": round(float(vm.group(1)), 6),
+                "recall": round(float(vm.group(2)), 6),
+            }
+            epoch_data.append(entry)
+        except (ValueError, IndexError):
+            continue
+
+    return epoch_data
+
+
 def parse_yolo_log(log_text: str) -> dict:
     # 先嘗試從 result.json 直接取指標（kernel 標準輸出格式）
     # result.json 被 read_log_files 讀入後混在 log_text 中，掃描每行找 JSON
@@ -86,6 +221,7 @@ def parse_yolo_log(log_text: str) -> dict:
             "metrics": _result_json_metrics,
             "raw_len": len(log_text),
             "per_class": _result_json_per_class or None,
+            "epoch_data": [],  # result.json 路徑沒有逐 epoch 資料，由 poller 從 results.csv 補充
             "_source": "result_json",
         }
 
@@ -143,4 +279,12 @@ def parse_yolo_log(log_text: str) -> dict:
         ap50_val = float(cm.group("ap50"))
         per_class[cls_name] = round(ap50_val, 6)
 
-    return {"metrics": metrics, "raw_len": len(log_text), "per_class": per_class or None}
+    # 逐 epoch 資料：優先從 stdout 解析（results.csv 由 poller 直接呼叫 parse_results_csv）
+    epoch_data = _parse_epoch_data_from_stdout(log_text)
+
+    return {
+        "metrics": metrics,
+        "raw_len": len(log_text),
+        "per_class": per_class or None,
+        "epoch_data": epoch_data,
+    }

@@ -173,6 +173,8 @@ class SubmissionOut(BaseModel):
     per_class_metrics: Optional[str] = None
     # Sprint 17 P1-4
     lightning_studio_name: Optional[str] = None
+    # M16: 訓練曲線（逐 epoch JSON array string）
+    epoch_curve: Optional[str] = None
     created_at: datetime
     # P3-25
     updated_at: Optional[datetime] = None
