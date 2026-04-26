@@ -44,7 +44,31 @@ KAGGLE_IS_PAID_TIER = os.environ.get("KAGGLE_IS_PAID_TIER", "false").lower() == 
 
 
 def _kaggle_env_ready() -> bool:
-    return bool(os.environ.get("KAGGLE_USERNAME") and os.environ.get("KAGGLE_KEY"))
+    """
+    Kaggle 認證就緒判斷：
+    1. KAGGLE_USERNAME + KAGGLE_KEY env var（優先）
+    2. ~/.kaggle/kaggle.json 存在（自動載入 env var，供 subprocess CLI 使用）
+    """
+    if os.environ.get("KAGGLE_USERNAME") and os.environ.get("KAGGLE_KEY"):
+        return True
+    # 嘗試從 kaggle.json 載入並注入 env var
+    kaggle_json_path = Path(os.path.expanduser("~/.kaggle/kaggle.json"))
+    if kaggle_json_path.exists():
+        try:
+            creds = json.loads(kaggle_json_path.read_text())
+            username = creds.get("username", "")
+            key = creds.get("key", "")
+            if username and key:
+                os.environ["KAGGLE_USERNAME"] = username
+                os.environ["KAGGLE_KEY"] = key
+                logger.info(
+                    "[poller] Loaded Kaggle credentials from %s (username=%s)",
+                    kaggle_json_path, username,
+                )
+                return True
+        except Exception as e:
+            logger.warning("[poller] Failed to parse kaggle.json: %s", e)
+    return False
 
 
 def _get_kaggle_api():
@@ -488,6 +512,11 @@ async def poll_once() -> dict:
             await _check_overtime(db, sub)
             await _check_budget(db, sub)
             status_result = await _fetch_kernel_status(api, sub.kaggle_kernel_slug)
+            logger.debug(
+                "[poller] checking req_no=%s kaggle_status=%s → kaggle_api_status=%s",
+                sub.req_no, sub.kaggle_status,
+                status_result["status"] if status_result else "fetch_failed",
+            )
             if not status_result:
                 continue
             new_status = status_result["status"]
