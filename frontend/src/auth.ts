@@ -83,7 +83,7 @@ export async function handleCallback(code: string, state: string): Promise<void>
     code_verifier: verifier,
   })
 
-  const resp = await fetch(`${LIDS_URL}/connect/token`, {
+  const resp = await fetch(`/lids/connect/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
@@ -145,7 +145,7 @@ export interface UserInfo {
 }
 
 async function fetchAndCacheUserInfo(token: string): Promise<UserInfo> {
-  const resp = await fetch(`${LIDS_URL}/connect/userinfo`, {
+  const resp = await fetch(`/lids/connect/userinfo`, {
     headers: { Authorization: `Bearer ${token}` },
   })
   if (!resp.ok) throw new Error('Failed to fetch userinfo')

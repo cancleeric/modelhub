@@ -13,6 +13,11 @@ export default defineConfig({
         target: 'http://localhost:8950',
         changeOrigin: true,
       },
+      '/lids': {
+        target: 'http://localhost:8073',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/lids/, ''),
+      },
     },
   },
 })
