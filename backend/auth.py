@@ -23,15 +23,47 @@ _TOKEN_CACHE: TTLCache = TTLCache(maxsize=512, ttl=60)
 
 _BOOTSTRAP_KEY_RAW = os.getenv("MODELHUB_API_KEY")
 
-if not _BOOTSTRAP_KEY_RAW:
-    logger.warning(
-        "MODELHUB_API_KEY environment variable is not set. "
-        "Bootstrap API key authentication is DISABLED. "
-        "Only DB-backed API keys will be accepted."
-    )
+# 已知不安全 key 清單（不論長度，出現即拒絕啟動）
+_KNOWN_INSECURE_KEYS = {
+    "modelhub-dev-key-2026",
+    "mh-cto-ops-2026",
+    "mh-cto-ops-2026-0418",
+}
 
-# 明確拒絕已知的預設 dev key（即使 env 被設成這個值）
-_KNOWN_INSECURE_KEYS = {"modelhub-dev-key-2026"}
+# S4: 啟動時檢查 bootstrap key 安全性
+# 若符合不安全 pattern（長度 < 32、含 dev/ops/2026、或在已知不安全清單）強制啟動失敗
+def _check_bootstrap_key_security(key: str | None) -> None:
+    """啟動時驗證 bootstrap key 安全性，不安全則強制 raise。"""
+    if not key:
+        logger.warning(
+            "MODELHUB_API_KEY environment variable is not set. "
+            "Bootstrap API key authentication is DISABLED. "
+            "Only DB-backed API keys will be accepted."
+        )
+        return
+
+    insecure_patterns = ("dev", "ops", "2026", "test", "local", "default")
+    reasons = []
+
+    if key in _KNOWN_INSECURE_KEYS:
+        reasons.append(f"key is in known insecure keys list")
+    if len(key) < 32:
+        reasons.append(f"key length {len(key)} < 32")
+    if any(p in key.lower() for p in insecure_patterns):
+        reasons.append(f"key contains insecure pattern ({', '.join(p for p in insecure_patterns if p in key.lower())})")
+
+    if reasons:
+        msg = (
+            "CRITICAL: insecure bootstrap key detected — "
+            + "; ".join(reasons)
+            + ". Set MODELHUB_API_KEY to a secure 64-char hex key. "
+            "Generate: python3 -c \"import secrets; print(secrets.token_hex(32))\""
+        )
+        logger.critical(msg)
+        raise RuntimeError(msg)
+
+
+_check_bootstrap_key_security(_BOOTSTRAP_KEY_RAW)
 
 
 def _verify_api_key_db(x_api_key: str) -> Optional[dict]:  # P3-26: dict | None → Optional[dict]
