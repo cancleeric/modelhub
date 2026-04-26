@@ -1,9 +1,12 @@
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+
+logger = logging.getLogger("modelhub.submissions")
 
 from models import Submission, ModelVersion, get_db
 from auth import CurrentUser, CurrentUserOrApiKey
@@ -251,13 +254,15 @@ async def list_submissions(
     status: Optional[str] = None,
     product: Optional[str] = None,
     dataset_status: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
+    # M13 P4: limit 上限強制 100；offset 上限強制 10000
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0, le=10000),
     db: Session = Depends(get_db),
     current_user: dict = CurrentUser,
 ):
     # P2-15: 加分頁（limit/offset），預設 limit=50
     # P2-13: 過濾系統用 magic string req_no（__quota__、__quota_lightning__、__health__ 等）
+    # M13 P4: limit max=100, offset max=10000（防止 ?limit=99999 拖垮 DB）
     q = db.query(Submission)
     q = q.filter(~Submission.req_no.startswith("__", autoescape=True))
     if status:
@@ -267,6 +272,11 @@ async def list_submissions(
     if dataset_status:
         q = q.filter(Submission.dataset_status == dataset_status)
     total = q.count()
+    # M13 P4: total > 10000 時建議改用 cursor-based pagination
+    if total > 10000:
+        logger.warning(
+            "list_submissions: total=%d > 10000, consider cursor-based pagination", total
+        )
     items = q.order_by(Submission.created_at.desc()).offset(offset).limit(limit).all()
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
