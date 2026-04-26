@@ -299,6 +299,13 @@ async def _on_kernel_complete(db: Session, sub: Submission) -> None:
     except Exception as _qe:
         logger.warning("_on_kernel_complete: queue mark_done failed: %s", _qe)
 
+    # M12 N5: 明確 log 訓練完成通報觸發（供 integration test 驗證）
+    logger.info(
+        "notify_event training_complete: req=%s version=%s map50=%s",
+        sub.req_no,
+        next_version,
+        metrics.get("map50"),
+    )
     await notify_event("training_complete", sub)
 
 
@@ -393,6 +400,11 @@ async def _on_kernel_error(db: Session, sub: Submission, raw: str) -> None:
     except Exception as _qe:
         logger.warning("_on_kernel_error: queue mark_failed failed: %s", _qe)
 
+    # M12 N5: 明確 log 訓練失敗通報觸發（供 integration test 驗證）
+    logger.info(
+        "notify_event training_complete: req=%s status=failed retry_count=%d",
+        sub.req_no, retry_count,
+    )
     await notify_event("training_failed", sub)
 
 

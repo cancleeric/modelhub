@@ -4,6 +4,7 @@ notifications.py — ModelHub 通知模組
 - notify(to, message)：低階 CMC 私訊（commtool CLI，fire-and-forget）
 - notify_event(event, submission, ...)：高階事件封裝（新建、核准、退件、完成、失敗、超時）
 - send_email(to_list, subject, body)：透過 mailtool 寄 email（週報用）
+- _dispatch_brain_webhook(event_type, submission, **kwargs)：M12 N4 跨服通報
 """
 
 import asyncio
@@ -80,6 +81,65 @@ async def send_email(to_list: Iterable[str], subject: str, body: str) -> bool:
 
 CTO_TARGET = os.environ.get("MODELHUB_CTO_USERNAME", "cto@hurricanecore.internal")
 
+# M12 N4: brain-cloud webhook dispatch 設定
+BRAIN_CLOUD_URL = os.environ.get("BRAIN_CLOUD_URL", "http://brain-cloud-dev:8932")
+BRAIN_API_KEY = os.environ.get("BRAIN_API_KEY", "")
+
+
+async def _dispatch_brain_webhook(
+    event_type: str,
+    submission,
+    model_version: Optional[str] = None,
+    map50: Optional[float] = None,
+) -> None:
+    """
+    M12 N4: 呼叫 brain-cloud POST /internal/dispatch-webhook，
+    推送事件給所有訂閱方（dagongzai 等外部服務）。
+    靜默失敗，不影響主流程。
+    """
+    if not BRAIN_API_KEY:
+        logger.debug("BRAIN_API_KEY not set, skip webhook dispatch (event=%s)", event_type)
+        return
+
+    try:
+        import httpx
+
+        payload = {
+            "event_type": event_type,
+            "req_no": submission.req_no,
+        }
+        if model_version is not None:
+            payload["model_version"] = model_version
+        if map50 is not None:
+            payload["map50"] = map50
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"{BRAIN_CLOUD_URL}/internal/dispatch-webhook",
+                json=payload,
+                headers={"X-Internal-Key": BRAIN_API_KEY},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                logger.info(
+                    "notify_event %s: brain webhook dispatch done "
+                    "(req=%s subs=%d success=%d fail=%d)",
+                    event_type, submission.req_no,
+                    data.get("subscriptions_found", 0),
+                    data.get("success_count", 0),
+                    data.get("fail_count", 0),
+                )
+            else:
+                logger.warning(
+                    "notify_event %s: brain webhook dispatch failed (req=%s status=%d)",
+                    event_type, submission.req_no, resp.status_code,
+                )
+    except Exception as e:
+        logger.warning(
+            "notify_event %s: brain webhook dispatch error (req=%s): %s",
+            event_type, getattr(submission, "req_no", "?"), e,
+        )
+
 
 async def notify_event(
     event: str,
@@ -126,6 +186,14 @@ async def notify_event(
                 recipients.add(submitter)
             for r in recipients:
                 await notify(r, f"[ModelHub] 需求單 {req_no} 訓練完成，模型版本已入庫等候驗收。")
+            # M12 N4: 通知外部訂閱方（dagongzai 等）
+            map50_val = note  # note 欄位可傳 map50（float 或 None），透過 caller 注入
+            await _dispatch_brain_webhook(
+                event_type="training_complete",
+                submission=submission,
+                model_version=getattr(submission, "latest_model_version", None),
+                map50=float(map50_val) if map50_val and isinstance(map50_val, (int, float, str)) else None,
+            )
 
         elif event == "training_failed":
             recipients = {CTO_TARGET}
@@ -133,6 +201,11 @@ async def notify_event(
                 recipients.add(submitter)
             for r in recipients:
                 await notify(r, f"[ModelHub] 需求單 {req_no} 訓練失敗，請到系統查看 log。")
+            # M12 N4: 通知外部訂閱方
+            await _dispatch_brain_webhook(
+                event_type="training_failed",
+                submission=submission,
+            )
 
         elif event == "training_overtime":
             msg = f"[ModelHub] 需求單 {req_no} 訓練已超過 24 小時未完成，可能卡住，請確認。"
