@@ -10,11 +10,11 @@ export default defineConfig({
     port: 3950,
     proxy: {
       '/api': {
-        target: 'http://localhost:8950',
+        target: process.env.MODELHUB_API_URL || 'http://modelhub-api-dev:8000',
         changeOrigin: true,
       },
       '/lids': {
-        target: 'http://localhost:8073',
+        target: process.env.LIDS_URL || 'http://squid-lids-dev:8073',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/lids/, ''),
       },

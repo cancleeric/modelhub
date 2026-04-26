@@ -259,7 +259,7 @@ async def list_submissions(
     # P2-15: 加分頁（limit/offset），預設 limit=50
     # P2-13: 過濾系統用 magic string req_no（__quota__、__quota_lightning__、__health__ 等）
     q = db.query(Submission)
-    q = q.filter(~Submission.req_no.like("__%__%"))
+    q = q.filter(~Submission.req_no.startswith("__", autoescape=True))
     if status:
         q = q.filter(Submission.status == status)
     if product:
