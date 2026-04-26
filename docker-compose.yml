@@ -11,6 +11,10 @@ services:
       - /Users/yinghaowang/HurricaneCore/docker-data/modelhub/models:/app/data/models
       # Sprint 6.1: Kaggle credential（host 若沒有該檔會 bind 空目錄，poller 會自動 skip）
       - /Users/yinghaowang/HurricaneCore/docker-data/modelhub/kaggle:/root/.kaggle:ro
+      # Persistent logs（訓練 poller 產生的 run log）
+      - /Users/yinghaowang/HurricaneCore/docker-data/modelhub/logs:/app/logs
+      # Kaggle kernel output 下載目錄（bind mount 避免重啟後遺失）
+      - /Users/yinghaowang/HurricaneCore/docker-data/modelhub/datasets:/app/datasets
     environment:
       # 必填：從 DB api_keys 表取得或由管理員手動設定。
       # 取得方式：hvault get hurricanecore/dev/MODELHUB_API_KEY
@@ -24,7 +28,7 @@ services:
       - ANEMONE_API_TOKEN=${ANEMONE_API_TOKEN:-}
       # DATABASE_URL: 從 Hurricane Vault 取得 (hurricanecore/dev/MODELHUB_DATABASE_URL)
       # 未設時使用 SQLite（預設值）；PostgreSQL 格式：postgresql://user:pass@host:5432/dbname
-      - DATABASE_URL=${DATABASE_URL:-}
+      - DATABASE_URL=${DATABASE_URL:-sqlite:////app/data/modelhub.db}
       # Sprint 17 P0-2: 本機訓練已停用，強制走線上 GPU（Kaggle/Lightning）
       - DISABLE_LOCAL_TRAINING=true
       # Lightning AI 憑證（Sprint 15 P2-1）
@@ -34,6 +38,10 @@ services:
       - LIGHTNING_API_KEY=${LIGHTNING_API_KEY:-}
       - LIGHTNING_USERNAME=${LIGHTNING_USERNAME:-cancleeric}
       - LIGHTNING_TEAMSPACE=${LIGHTNING_TEAMSPACE:-default-teamspace}
+      # Kaggle kernel output 下載目錄（對應 bind mount datasets/）
+      - MODELHUB_KAGGLE_DL_DIR=/app/datasets
+      # 模型訓練輸出 base（對應 bind mount models/）
+      - MODELHUB_TRAINING_BASE=/app/data/models
     restart: unless-stopped
     networks:
       - squid_dev_network
