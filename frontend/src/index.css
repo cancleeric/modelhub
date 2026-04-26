@@ -1,8 +1,8 @@
+/* Google Fonts 必須在所有 @import 最前面 */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap');
+
 @import "tailwindcss";
 @import "./design-system/tokens.css";
-
-/* Google Fonts：Inter + Noto Sans TC */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap');
 
 body {
   margin: 0;

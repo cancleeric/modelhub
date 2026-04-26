@@ -276,25 +276,25 @@ export default function StatsPage() {
         <div className="space-y-4">
           <BarCard title="按產品分布" data={stats.byProduct} />
           <BarCard title="訓練資源分布" data={stats.resourceDist} />
-          {quota && (
-            <>
-              <QuotaCard
-                title="Kaggle 免費配額（本週）"
-                used={quota.kaggle.used_hours_this_week}
-                limit={quota.kaggle.weekly_limit_hours}
-                remaining={quota.kaggle.remaining_hours_this_week}
-                unit="h/週"
-                warnThreshold={5}
-              />
-              <QuotaCard
-                title="Lightning AI 免費配額（本月）"
-                used={quota.lightning.used_hours_this_month}
-                limit={quota.lightning.monthly_limit_hours}
-                remaining={quota.lightning.remaining_hours_this_month}
-                unit="h/月"
-                warnThreshold={3}
-              />
-            </>
+          {quota?.kaggle && (
+            <QuotaCard
+              title="Kaggle 免費配額（本週）"
+              used={quota.kaggle.used_hours_this_week ?? 0}
+              limit={quota.kaggle.weekly_limit_hours ?? 30}
+              remaining={quota.kaggle.remaining_hours_this_week ?? 0}
+              unit="h/週"
+              warnThreshold={5}
+            />
+          )}
+          {quota?.lightning && (
+            <QuotaCard
+              title="Lightning AI 免費配額（本月）"
+              used={quota.lightning.used_hours_this_month ?? 0}
+              limit={quota.lightning.monthly_limit_hours ?? 22}
+              remaining={quota.lightning.remaining_hours_this_month ?? 0}
+              unit="h/月"
+              warnThreshold={3}
+            />
           )}
         </div>
       </div>
@@ -324,16 +324,19 @@ function QuotaCard({
   unit: string
   warnThreshold: number
 }) {
-  const pct = Math.min(100, (used / limit) * 100)
-  const isWarn = remaining < warnThreshold
+  const safeUsed = used ?? 0
+  const safeLimit = limit ?? 0
+  const safeRemaining = remaining ?? 0
+  const pct = safeLimit > 0 ? Math.min(100, (safeUsed / safeLimit) * 100) : 0
+  const isWarn = safeRemaining < warnThreshold
   const barColor = isWarn ? 'bg-red-500' : pct >= 70 ? 'bg-yellow-500' : 'bg-green-500'
   return (
     <div className="bg-white rounded shadow p-5">
       <h3 className="text-sm font-semibold text-gray-700 mb-3">{title}</h3>
       <div className="flex justify-between text-sm text-gray-600 mb-2">
-        <span>已用 <strong>{used.toFixed(1)}</strong> {unit}</span>
+        <span>已用 <strong>{safeUsed.toFixed(1)}</strong> {unit}</span>
         <span className={isWarn ? 'text-red-600 font-semibold' : 'text-gray-600'}>
-          剩餘 <strong>{remaining.toFixed(1)}</strong> / {limit} h
+          剩餘 <strong>{safeRemaining.toFixed(1)}</strong> / {safeLimit} h
         </span>
       </div>
       <div className="h-3 bg-gray-100 rounded overflow-hidden">

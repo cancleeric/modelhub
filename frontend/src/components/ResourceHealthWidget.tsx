@@ -56,7 +56,7 @@ function QuotaBar({
   colorWhenWarn?: string
   colorNormal?: string
 }) {
-  if (remaining === null) {
+  if (remaining == null) {
     return (
       <div>
         <div className="text-xs text-gray-500 mb-1">{label}</div>
@@ -64,8 +64,9 @@ function QuotaBar({
       </div>
     )
   }
-  const pct = Math.min(100, (remaining / limit) * 100)
-  const isWarn = remaining < warnThreshold
+  const safeRemaining = remaining ?? 0
+  const pct = Math.min(100, (safeRemaining / limit) * 100)
+  const isWarn = safeRemaining < warnThreshold
   const barColor = isWarn ? colorWhenWarn : colorNormal
 
   return (
@@ -75,7 +76,7 @@ function QuotaBar({
         <div className={`${barColor} h-full transition-all`} style={{ width: `${pct}%` }} />
       </div>
       <span className={`text-xs font-medium ${isWarn ? 'text-red-600' : 'text-gray-700'}`}>
-        {remaining.toFixed(1)} h 剩餘
+        {safeRemaining.toFixed(1)} h 剩餘
         {isWarn && ' ⚠ 即將耗盡'}
       </span>
     </div>
