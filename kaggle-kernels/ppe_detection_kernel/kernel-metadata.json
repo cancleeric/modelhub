@@ -1,0 +1,14 @@
+{
+  "id": "boardgamegroup/mh-2026-018-ppe-detection-yolov8m",
+  "title": "MH-2026-018 PPE Detection YOLOv8m",
+  "code_file": "train_kaggle.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": ["snehilsanyal/construction-site-safety-image-dataset-roboflow"],
+  "competition_sources": [],
+  "kernel_sources": [],
+  "req_no": "MH-2026-018"
+}
