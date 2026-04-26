@@ -89,10 +89,14 @@ if _input_root.exists():
     print(f"[DEBUG] /kaggle/input/ dirs: {_dirs}", flush=True)
 
 # Locate COCO128 dataset
+# Kaggle dataset slug "ultralytics/coco128" mounts at:
+#   /kaggle/input/datasets/organizations/ultralytics/coco128/coco128/
+# (observed from [DEBUG] log — "organizations/" layer injected by Kaggle infra)
 _COCO_CANDIDATES = [
-    Path("/kaggle/input/datasets/ultralytics/coco128"),
-    Path("/kaggle/input/coco128"),
+    Path("/kaggle/input/datasets/organizations/ultralytics/coco128/coco128"),  # actual mount (v2 API)
+    Path("/kaggle/input/datasets/ultralytics/coco128"),                        # legacy mount
     Path("/kaggle/input/coco128/coco128"),
+    Path("/kaggle/input/coco128"),
 ]
 COCO_ROOT = next((p for p in _COCO_CANDIDATES if p.exists()), _COCO_CANDIDATES[0])
 print(f"[COCO_ROOT] {COCO_ROOT} (exists={COCO_ROOT.exists()})", flush=True)
