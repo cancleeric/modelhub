@@ -151,6 +151,40 @@ def _append_history(db: Session, req_no: str, action: str, meta: Optional[dict] 
     db.add(row)
 
 
+def _read_result_json(dest_dir: str) -> dict:
+    """
+    直接讀取 kernel output 目錄下的 result.json。
+    若存在且含 map50/map50_95，回傳 metrics dict；否則回傳 {}。
+    這是最可靠的 metrics 來源（kernel 已標準化輸出）。
+    """
+    result_path = Path(dest_dir) / "result.json"
+    if not result_path.exists():
+        return {}
+    try:
+        obj = json.loads(result_path.read_text())
+        metrics: dict = {}
+        if "map50" in obj:
+            metrics["map50"] = float(obj["map50"])
+        if "map50_95" in obj:
+            metrics["map50_95"] = float(obj["map50_95"])
+        if "epochs" in obj:
+            metrics["epochs"] = int(obj["epochs"])
+        if "batch_size" in obj:
+            metrics["batch_size"] = int(obj["batch_size"])
+        per_class = obj.get("per_class_map50") or {}
+        return {"metrics": metrics, "per_class": per_class or None}
+    except Exception as e:
+        logger.warning("_read_result_json failed (%s): %s", result_path, e)
+        return {}
+
+
+def _compute_pass_fail(map50: float, threshold: float) -> str:
+    """依 map50_threshold 判斷 pass/fail。"""
+    if map50 >= threshold:
+        return "pass"
+    return "fail"
+
+
 async def _on_kernel_complete(db: Session, sub: Submission) -> None:
     """complete → 下載 output → 解析 → 建 ModelVersion → status=trained"""
     # 幂等 guard：若已是終態，直接跳過，避免重複建 ModelVersion
@@ -166,10 +200,20 @@ async def _on_kernel_complete(db: Session, sub: Submission) -> None:
     parsed: dict = {}
     log_text = ""
     if downloaded:
-        log_text = _read_log_files(downloaded)
-        if log_text:
-            parsed = parse_training_log(sub.arch, log_text)
-            metrics = parsed.get("metrics", {}) or {}
+        # 優先讀 result.json（kernel 標準輸出，最可靠）
+        parsed = _read_result_json(downloaded)
+        if parsed.get("metrics"):
+            metrics = parsed["metrics"]
+            logger.info("_on_kernel_complete: req=%s metrics from result.json: %s",
+                        sub.req_no, metrics)
+        else:
+            # fallback：從 log 文字解析（支援 NDJSON 自動解碼）
+            log_text = _read_log_files(downloaded)
+            if log_text:
+                parsed = parse_training_log(sub.arch, log_text)
+                metrics = parsed.get("metrics", {}) or {}
+                logger.info("_on_kernel_complete: req=%s metrics from log parser: %s",
+                            sub.req_no, metrics)
 
     now = datetime.utcnow()
     sub.kaggle_status = "complete"
@@ -191,13 +235,23 @@ async def _on_kernel_complete(db: Session, sub: Submission) -> None:
     next_version = _next_version_for(db, sub.req_no)
 
     # P3-4: 若有 per_class 指標，同步寫入 submission 並帶入 mv notes
-    per_class = parsed.get("per_class") or parsed.get("class_metrics") if downloaded and log_text else None
+    per_class = parsed.get("per_class") or parsed.get("class_metrics") if downloaded else None
     if per_class and isinstance(per_class, dict):
-        import json as _json_pc
         try:
-            sub.per_class_metrics = _json_pc.dumps(per_class, ensure_ascii=False)
+            sub.per_class_metrics = json.dumps(per_class, ensure_ascii=False)
         except Exception:
             pass
+
+    # 自動計算 pass_fail（依 submission 的 map50_threshold）
+    pass_fail: Optional[str] = None
+    map50_val = metrics.get("map50")
+    if map50_val is not None:
+        threshold = sub.map50_threshold or 0.0
+        pass_fail = _compute_pass_fail(map50_val, threshold)
+        logger.info(
+            "_on_kernel_complete: req=%s map50=%.4f threshold=%.4f → pass_fail=%s",
+            sub.req_no, map50_val, threshold, pass_fail,
+        )
 
     mv = ModelVersion(
         req_no=sub.req_no,
@@ -205,15 +259,16 @@ async def _on_kernel_complete(db: Session, sub: Submission) -> None:
         model_name=sub.req_name or f"{sub.product} model",
         version=next_version,
         train_date=now.strftime("%Y-%m-%d"),
-        map50=metrics.get("map50"),
+        map50=map50_val,
         map50_95=metrics.get("map50_95"),
-        map50_actual=metrics.get("map50"),
+        map50_actual=map50_val,
         map50_95_actual=metrics.get("map50_95"),
         epochs=metrics.get("epochs"),
         batch_size=metrics.get("batch_size"),
         arch=sub.arch,
         kaggle_kernel_url=f"https://www.kaggle.com/code/{sub.kaggle_kernel_slug}",
         status="pending_acceptance",
+        pass_fail=pass_fail,
         notes=f"auto-filled by kaggle-poller at {now.isoformat()}",
     )
     db.add(mv)
