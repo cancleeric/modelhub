@@ -292,6 +292,9 @@ async def perform_action(
         finally:
             queue_db.close()
 
+        # M17-3: approve 後自動 scaffold Kaggle kernel（若 arch 為 yolo* 且 dataset_path 已設）
+        _auto_scaffold_kernel(obj, db)
+
     # Auto-approve 模式：submit 後若 validator pass 且 dataset 就緒，自動 approve
     if action == "submit" and AUTO_APPROVE_AFTER_VALIDATOR:
         background_tasks.add_task(_auto_approve_if_valid_bg, req_no, SessionLocal)
@@ -633,6 +636,54 @@ async def retrain_lightning(
         "studio_name": studio_name,
         "epochs": body.epochs,
     }
+
+
+# ---------------------------------------------------------------------------
+# M17-3: approve 後自動 Scaffold Kaggle Kernel
+# ---------------------------------------------------------------------------
+
+import re as _re
+_YOLO_ARCH_RE = _re.compile(r"^yolo", _re.IGNORECASE)
+
+
+def _auto_scaffold_kernel(obj: "Submission", db: "Session") -> None:
+    """
+    approve 動作後呼叫：若 arch 為 yolo* 且 dataset_path 已設，
+    自動呼叫 KernelScaffolder.scaffold()。
+    失敗不阻塞 approve（log warning）。
+    """
+    arch = getattr(obj, "arch", None) or ""
+    dataset_path = getattr(obj, "dataset_path", None)
+    if not _YOLO_ARCH_RE.match(arch):
+        _logger.debug("_auto_scaffold_kernel: req=%s arch=%s not yolo*, skip", obj.req_no, arch)
+        return
+    if not dataset_path:
+        _logger.debug("_auto_scaffold_kernel: req=%s dataset_path not set, skip", obj.req_no)
+        return
+    try:
+        from resources.kernel_scaffolder import KernelScaffolder
+        scaffolder = KernelScaffolder()
+        kernel_dir = scaffolder.scaffold(obj)
+        # scaffold 成功後更新 kaggle_kernel_slug（若尚未設定）
+        if kernel_dir and not obj.kaggle_kernel_slug:
+            from resources.kernel_scaffolder import _make_slug
+            slug = _make_slug(obj)
+            obj.kaggle_kernel_slug = slug
+            db.commit()
+            _logger.info(
+                "_auto_scaffold_kernel: req=%s scaffold OK dir=%s slug=%s",
+                obj.req_no, kernel_dir.name, slug,
+            )
+        elif kernel_dir:
+            _logger.info(
+                "_auto_scaffold_kernel: req=%s kernel dir already existed, slug unchanged",
+                obj.req_no,
+            )
+    except Exception as e:
+        _logger.warning(
+            "_auto_scaffold_kernel: scaffold failed for req=%s, approve not blocked: %s",
+            obj.req_no, e,
+        )
 
 
 def _handle_start_training_resource_bg(req_no: str, db_session_factory) -> None:

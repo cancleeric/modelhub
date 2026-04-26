@@ -140,6 +140,55 @@ async def refresh_kaggle(
     }
 
 
+@router.post("/{req_no}/scaffold-kernel")
+async def scaffold_kernel(
+    req_no: str,
+    db: Session = Depends(get_db),
+    current_user: dict = CurrentUserOrApiKey,
+):
+    """
+    M17-4: 手動觸發 scaffold Kaggle kernel 目錄（reviewer 補建）。
+    若目錄已存在，回傳既有 slug（不覆寫）。
+    """
+    obj = db.query(Submission).filter(Submission.req_no == req_no).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Submission not found")
+
+    try:
+        from resources.kernel_scaffolder import KernelScaffolder, _make_slug
+        scaffolder = KernelScaffolder()
+        kernel_dir = scaffolder.scaffold(obj)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"scaffold failed: {e}",
+        )
+
+    slug = _make_slug(obj)
+    # 若 kaggle_kernel_slug 尚未設定，順便更新
+    updated_slug = False
+    if not obj.kaggle_kernel_slug:
+        obj.kaggle_kernel_slug = slug
+        from models import SubmissionHistory
+        db.add(SubmissionHistory(
+            req_no=req_no,
+            action="scaffold_kernel",
+            actor=(current_user or {}).get("preferred_username") or "unknown",
+            meta=json.dumps({"slug": slug, "dir": kernel_dir.name}, ensure_ascii=False),
+        ))
+        db.commit()
+        db.refresh(obj)
+        updated_slug = True
+
+    return {
+        "req_no": req_no,
+        "kernel_dir": kernel_dir.name,
+        "slug": slug,
+        "already_existed": not updated_slug,
+        "kaggle_kernel_slug": obj.kaggle_kernel_slug,
+    }
+
+
 @router.post("/{req_no}/refresh-lightning")
 async def refresh_lightning(
     req_no: str,

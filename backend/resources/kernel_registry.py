@@ -83,3 +83,35 @@ def get_kernel_dir(req_no: str) -> Optional[Path]:
 def has_kaggle_kernel(req_no: str) -> bool:
     """該 req_no 是否有對應的 Kaggle kernel 目錄（結果來自 TTL cache）"""
     return get_kernel_dir(req_no) is not None
+
+
+def scaffold_if_missing(submission) -> Optional[Path]:
+    """
+    M17-4 helper：若 req_no 對應的 kernel 目錄不存在，呼叫 KernelScaffolder 建立。
+    建立後清除 TTL cache，讓下次 get_kernel_dir 能立即偵測到新目錄。
+    成功回傳 kernel dir Path；失敗回傳 None（不拋例外）。
+    """
+    global _cache, _cache_expires
+
+    req_no = getattr(submission, "req_no", None)
+    if not req_no:
+        logger.warning("scaffold_if_missing: submission 缺 req_no")
+        return None
+
+    # 先查 cache，若已存在直接回傳
+    existing = get_kernel_dir(req_no)
+    if existing:
+        return existing
+
+    try:
+        from resources.kernel_scaffolder import KernelScaffolder
+        scaffolder = KernelScaffolder()
+        kernel_dir = scaffolder.scaffold(submission)
+        # 清除 TTL cache，確保下次掃描能看到新目錄
+        _cache = None
+        _cache_expires = 0.0
+        logger.info("scaffold_if_missing: scaffold OK req=%s dir=%s", req_no, kernel_dir)
+        return kernel_dir
+    except Exception as e:
+        logger.warning("scaffold_if_missing: failed req=%s: %s", req_no, e)
+        return None
