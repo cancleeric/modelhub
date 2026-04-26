@@ -322,3 +322,54 @@ class ResourceProber:
             "device": local_result["device"],
             "details": local_result,
         }
+
+    def get_fallback_resource(
+        self,
+        submission=None,
+        attempted: Optional[list] = None,
+        db=None,
+    ) -> Optional[dict]:
+        """
+        M18-3: 按優先序（kaggle → lightning → ssh → local）找第一個
+        available 且未在 attempted 中的資源。
+
+        attempted: 已嘗試的 resource 名稱 list（e.g. ["kaggle", "lightning"]）。
+        回傳 dict（格式同 get_best_resource），或 None（所有資源都不可用）。
+
+        SSH 環境不穩定 — probe_ssh_host 已有 timeout 防護（ConnectTimeout=3 + subprocess timeout=5）。
+        """
+        attempted_set = set(attempted or [])
+
+        # 1. Kaggle
+        if "kaggle" not in attempted_set:
+            result = self.probe_kaggle(db=db)
+            if result["available"]:
+                return {"resource": "kaggle", "device": "cuda", "details": result}
+            logger.info("get_fallback_resource: Kaggle unavailable: %s", result.get("reason"))
+
+        # 2. Lightning
+        if "lightning" not in attempted_set:
+            result = self.probe_lightning(db=db)
+            if result["available"]:
+                return {"resource": "lightning", "device": "cuda", "details": result}
+            logger.info("get_fallback_resource: Lightning unavailable: %s", result.get("reason"))
+
+        # 3. SSH hosts（跳過已嘗試的 host）
+        ssh_hosts = _parse_ssh_hosts()
+        for host in ssh_hosts:
+            resource_key = f"ssh@{host}"
+            if resource_key in attempted_set or "ssh" in attempted_set:
+                continue
+            ssh_result = self.probe_ssh_host(host)
+            if ssh_result["available"]:
+                return {
+                    "resource": "ssh",
+                    "device": "cuda",
+                    "host": host,
+                    "details": ssh_result,
+                }
+            logger.info("get_fallback_resource: SSH %s unavailable: %s",
+                        host, ssh_result.get("reason"))
+
+        # 全部耗盡
+        return None

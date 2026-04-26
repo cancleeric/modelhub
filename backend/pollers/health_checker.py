@@ -254,6 +254,67 @@ async def _check_queue_starvation(db) -> None:
         logger.warning("health_check: queue starvation check failed: %s", e)
 
 
+def record_resource_all_exhausted(
+    db,
+    req_no: str,
+    attempted: list,
+    note: Optional[str] = None,
+) -> None:
+    """
+    M18-4: 三個 resource（kaggle/lightning/ssh）都不可用時，
+    寫入 events 表（event_type=resource_all_exhausted）。
+    不走 CMC；UI 後續 phase 從 events 表顯示 toast / log。
+
+    1 小時節流：同一 req_no 在過去 1 小時內已有相同 event 則跳過。
+    """
+    from datetime import timedelta
+    from models import SystemEvent
+
+    # 節流：查 events 表
+    try:
+        cutoff = datetime.utcnow() - timedelta(hours=1)
+        existing = (
+            db.query(SystemEvent)
+            .filter(
+                SystemEvent.event_type == "resource_all_exhausted",
+                SystemEvent.req_no == req_no,
+                SystemEvent.created_at >= cutoff,
+            )
+            .first()
+        )
+        if existing:
+            logger.debug(
+                "record_resource_all_exhausted: throttled req=%s (already recorded within 1h)",
+                req_no,
+            )
+            return
+    except Exception as _te:
+        logger.warning("record_resource_all_exhausted: throttle check failed: %s", _te)
+
+    # 寫 events 表
+    try:
+        message = (
+            note
+            or f"所有 training resource 均不可用（已嘗試：{', '.join(attempted)}），工單 {req_no} 標記失敗"
+        )
+        event = SystemEvent(
+            event_type="resource_all_exhausted",
+            req_no=req_no,
+            severity="error",
+            message=message,
+            meta=json.dumps({"attempted": attempted, "req_no": req_no}, ensure_ascii=False),
+            created_at=datetime.utcnow(),
+        )
+        db.add(event)
+        db.commit()
+        logger.warning(
+            "resource_all_exhausted: req=%s attempted=%s event written to events table",
+            req_no, attempted,
+        )
+    except Exception as e:
+        logger.warning("record_resource_all_exhausted: failed to write event: %s", e)
+
+
 async def run_health_check() -> dict:
     """執行所有健康檢查（async，供 APScheduler AsyncIOScheduler 呼叫）"""
     global _last_check_at

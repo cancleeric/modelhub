@@ -161,6 +161,8 @@ class TrainingQueue(Base):
     target_resource = Column(String, nullable=True)                   # kaggle/lightning/ssh/local
     retry_count = Column(Integer, default=0)
     error_reason = Column(String, nullable=True)
+    # M18-1: Cross-Resource Auto Retry — 已嘗試的 resource list（TEXT JSON）
+    attempted_resources = Column(String, nullable=True, default="[]")
 
 
 class SubmissionHistory(Base):
@@ -175,6 +177,23 @@ class SubmissionHistory(Base):
     reasons = Column(String, nullable=True)       # JSON array string
     note = Column(String, nullable=True)
     meta = Column(String, nullable=True)          # JSON blob 任意附加資料
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class SystemEvent(Base):
+    """
+    系統事件日誌（M18-4）— 供 brain-console UI 顯示的結構化事件流。
+    例：resource_all_exhausted、health_alert 等。
+    """
+
+    __tablename__ = "events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    event_type = Column(String, nullable=False, index=True)   # e.g. resource_all_exhausted
+    req_no = Column(String, nullable=True, index=True)        # 關聯工單（可 NULL 代表系統級事件）
+    severity = Column(String, nullable=False, default="warning")  # info/warning/error
+    message = Column(String, nullable=False)
+    meta = Column(String, nullable=True)                      # JSON blob
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
@@ -224,10 +243,13 @@ _MIGRATIONS = [
     # Sprint 20: 訓練隊列（SQLite 用 create_all 建表，此列僅佔位確保 migration 完整性）
     # P3-25: updated_at
     ("submissions", "updated_at", "DATETIME"),
-    # P1-3: ModelVersion 可追溯性欄位（最後一筆手動 migration，新 migration 請走 Alembic）
+    # P1-3: ModelVersion 可追溯性欄位
     ("model_versions", "dataset_snapshot_id", "VARCHAR(255)"),
     ("model_versions", "train_commit_hash",    "VARCHAR(40)"),
     ("model_versions", "hyperparams_json",     "TEXT"),
+    # M18-1: Cross-Resource Auto Retry — TrainingQueue.attempted_resources
+    ("training_queue", "attempted_resources",  "TEXT DEFAULT '[]'"),
+    # M18-4: events 表由 create_all 建立（SystemEvent），此列僅佔位
 ]
 
 
