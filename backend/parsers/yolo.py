@@ -140,6 +140,9 @@ def parse_yolo_log(log_text: str) -> dict:
     search_start = all_row_positions[-2] if len(all_row_positions) >= 2 else 0
     for cm in class_row_pattern.finditer(log_text, search_start):
         cls_name = cm.group("cls")
+        if cls_name.lower() == "all":
+            # `all` 行應由 top-level mAP 解析處理，不進 per_class dict
+            continue
         ap50_val = float(cm.group("ap50"))
         per_class[cls_name] = round(ap50_val, 6)
 

@@ -10,29 +10,46 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 
-def read_log_files(dir_path: str, max_size: int = 5 * 1024 * 1024) -> str:
+def read_log_files(dir_path: str, max_size: int = 20 * 1024 * 1024) -> str:
     """
     P3-28: 讀取目錄下所有 log/txt/json/out/stdout 檔案，concat 回傳（最大 max_size bytes）。
     原本各 poller 各有一份實作，統一抽到這裡。
+
+    檔案讀取優先序：
+    1. .log / .out / .stdout（training log，最重要，優先讀）
+    2. .json（result.json 等，次之）
+    3. .txt（輔助資料）
+    並且 .log 採用單獨 20MB 限額，避免大型 NDJSON log（如 Kaggle PPE/YOLOv8m
+    輸出可達 5–10MB）被 5MB 硬限截斷而導致 metrics 解析失敗。
     """
-    acc = []
-    total = 0
     root = Path(dir_path)
     if not root.exists():
         return ""
-    for f in sorted(root.rglob("*")):
-        if not f.is_file():
-            continue
-        if f.suffix.lower() not in (".log", ".txt", ".json", ".out", ".stdout"):
-            continue
-        try:
-            size = f.stat().st_size
-            if total + size > max_size:
-                break
-            acc.append(f.read_text(errors="replace"))
-            total += size
-        except Exception:
-            continue
+
+    # 分兩批：log 優先，其他次之
+    _PRIORITY_EXTS = {".log", ".out", ".stdout"}
+    _SECONDARY_EXTS = {".json", ".txt"}
+
+    def _collect(exts: set, size_limit: int) -> list[str]:
+        parts: list[str] = []
+        used = 0
+        for f in sorted(root.rglob("*")):
+            if not f.is_file():
+                continue
+            if f.suffix.lower() not in exts:
+                continue
+            try:
+                size = f.stat().st_size
+                if used + size > size_limit:
+                    continue  # skip（不 break）— 嘗試更小的下一個檔案
+                parts.append(f.read_text(errors="replace"))
+                used += size
+            except Exception:
+                continue
+        return parts
+
+    acc = _collect(_PRIORITY_EXTS, max_size)
+    acc += _collect(_SECONDARY_EXTS, max_size)
     return "\n".join(acc)
 
 

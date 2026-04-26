@@ -331,3 +331,89 @@ class TestOnKernelCompleteMetrics:
 
         assert mv_kwargs.get("map50") is None
         assert mv_kwargs.get("pass_fail") is None
+
+
+# ---------------------------------------------------------------------------
+# 6. PPE log 格式（MH-2026-018）— 超大 NDJSON log 不被截斷
+# ---------------------------------------------------------------------------
+
+# PPE kernel 的 result.json 沒有輸出為獨立檔案，只 print() 到 stdout，
+# 所以 NDJSON log 是唯一的 metrics 來源。
+# 重現 bug：原 read_log_files 5MB 上限將 5.5MB log 截斷為空字串。
+
+SAMPLE_PPE_NDJSON_LOG = (
+    '[{"stream_name":"stdout","time":1.0,"data":"[INIT] req=MH-2026-018 epochs=200\\n"}\n'
+    ',{"stream_name":"stdout","time":2.0,"data":"Epoch 178/200\\n"}\n'
+    ',{"stream_name":"stdout","time":3.0,"data":"                   all       130      1800      0.920      0.870      0.895      0.586\\n"}\n'
+    ',{"stream_name":"stdout","time":4.0,"data":"              person       130       780      0.911      0.868      0.889      0.578\\n"}\n'
+    ',{"stream_name":"stdout","time":5.0,"data":"             hardhat       130       420      0.935      0.920      0.942      0.620\\n"}\n'
+    ',{"stream_name":"stdout","time":6.0,"data":"          no_hardhat       130       240      0.870      0.840      0.829      0.533\\n"}\n'
+    ',{"stream_name":"stdout","time":7.0,"data":"mAP50=0.8948  mAP50-95=0.5861\\n"}\n'
+    ',{"stream_name":"stdout","time":8.0,"data":"[PER-CLASS mAP50] {\\"person\\": 0.8893, \\"hardhat\\": 0.9424}\\n"}\n'
+    ']'
+)
+
+
+class TestPPELogFormat:
+    """MH-2026-018 PPE 格式測試（NDJSON，無獨立 result.json）"""
+
+    def test_ppe_ndjson_parse_yields_map50(self):
+        """PPE NDJSON log → parse_yolo_log 應能取得 map50"""
+        yolo_mod = _import_parsers_yolo()
+        result = yolo_mod.parse_yolo_log(SAMPLE_PPE_NDJSON_LOG)
+        assert result["metrics"].get("map50") is not None
+        assert result["metrics"]["map50"] == pytest.approx(0.895, abs=0.01)
+        assert result["metrics"]["map50_95"] == pytest.approx(0.586, abs=0.01)
+
+    def test_ppe_per_class_excludes_all_key(self):
+        """per_class dict 不應包含 'all' 這個 key"""
+        yolo_mod = _import_parsers_yolo()
+        result = yolo_mod.parse_yolo_log(SAMPLE_PPE_NDJSON_LOG)
+        per_class = result.get("per_class") or {}
+        assert "all" not in per_class, f"'all' 不應在 per_class 中，實際：{per_class}"
+
+    def test_ppe_per_class_contains_ppe_classes(self):
+        """per_class 包含正確的 PPE class 名稱"""
+        yolo_mod = _import_parsers_yolo()
+        result = yolo_mod.parse_yolo_log(SAMPLE_PPE_NDJSON_LOG)
+        per_class = result.get("per_class") or {}
+        # PPE kernel 含 person / hardhat / no_hardhat
+        assert "person" in per_class or "hardhat" in per_class, \
+            f"應含 PPE class，實際：{per_class}"
+
+    def test_read_log_files_reads_large_log(self, tmp_path):
+        """read_log_files 應能讀取超過舊 5MB 上限的 log 檔（修復 bug）"""
+        import importlib
+        import utils as utils_mod
+        importlib.reload(utils_mod)
+
+        # 製造一個 6MB log 檔（超過舊 5MB 限制）
+        large_log = tmp_path / "train.log"
+        # PPE-like NDJSON 重複到 6MB
+        chunk = (
+            ',{"stream_name":"stdout","time":1.0,"data":"Epoch 1/200\\n"}\n'
+            * 10  # ~1KB
+        )
+        content = "[" + chunk[1:] + "]"  # 移除第一個逗號
+        # 重複到約 6MB
+        repeats = (6 * 1024 * 1024) // len(content.encode()) + 1
+        final_content = "[" + (chunk * repeats) + "]"
+        large_log.write_text(final_content)
+        size_mb = large_log.stat().st_size / 1024 / 1024
+        assert size_mb > 5.0, f"測試 log 應大於 5MB，實際 {size_mb:.1f}MB"
+
+        result = utils_mod.read_log_files(str(tmp_path))
+        assert len(result) > 0, "read_log_files 不應回傳空字串（修復 5MB 截斷 bug）"
+        assert "Epoch" in result
+
+    def test_ppe_pass_fail_above_07_threshold(self):
+        """PPE mAP50=0.895 > threshold 0.7 → pass"""
+        import pollers.kaggle_poller as kp
+        importlib.reload(kp)
+        assert kp._compute_pass_fail(0.895, 0.7) == "pass"
+
+    def test_ppe_fail_below_07_threshold(self):
+        """mAP50=0.65 < threshold 0.7 → fail"""
+        import pollers.kaggle_poller as kp
+        importlib.reload(kp)
+        assert kp._compute_pass_fail(0.65, 0.7) == "fail"
