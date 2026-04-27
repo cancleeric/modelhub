@@ -1,0 +1,18 @@
+{
+  "req_no": "MH-2026-009",
+  "device": "mps",
+  "epochs": 8,
+  "batch_size": 8,
+  "train_seconds": 794,
+  "n_train": 4000,
+  "n_val": 500,
+  "n_test": 500,
+  "val_cer": 0.4152,
+  "test_cer": 0.4227,
+  "test_exact_match": 0.036,
+  "verdict": "fail",
+  "tier": "未達 baseline，需再訓練",
+  "target_cer": 0.05,
+  "baseline_cer": 0.1,
+  "best_path": "/Users/yinghaowang/HurricaneCore/modelhub/training/mh-2026-009/best"
+}
