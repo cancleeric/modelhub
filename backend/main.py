@@ -6,6 +6,8 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from routers import submissions, registry, actions, kaggle, api_keys, predict, health, inference, queue as queue_router
+from routers import comments as comments_router
+from routers import attachments as attachments_router
 from models import init_db
 from pollers.kaggle_poller import start_scheduler, stop_scheduler
 import pollers.lightning_poller as _lightning_poller
@@ -74,6 +76,8 @@ app.include_router(predict.router, prefix="/api/predict", tags=["predict"])
 app.include_router(health.router, prefix="/api/health", tags=["health"])
 app.include_router(inference.router, prefix="/v1", tags=["inference"])
 app.include_router(queue_router.router, prefix="/api/queue", tags=["queue"])
+app.include_router(comments_router.router, prefix="/api", tags=["comments"])
+app.include_router(attachments_router.router, prefix="/api", tags=["attachments"])
 
 
 @app.get("/health")

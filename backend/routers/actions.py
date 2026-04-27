@@ -72,6 +72,7 @@ class RejectPayload(BaseModel):
     reasons: List[str]
     note: Optional[str] = None
     actor: Optional[str] = None
+    reject_details_markdown: Optional[str] = None
 
 
 class ResubmitPayload(BaseModel):
@@ -130,6 +131,46 @@ async def reject_submission(
         db, req_no=req_no, action="reject", actor=actor,
         reasons=payload.reasons, note=payload.note,
     )
+
+    # M22: 自動建立首筆 Discussion comment
+    from routers.comments import create_reject_comment, _update_submission_discussion_stats
+    from models import SubmissionComment as _SubmissionComment
+    actor_email = (current_user or {}).get("email") or (current_user or {}).get("preferred_username") or actor
+    if payload.reject_details_markdown:
+        # 若有提供 markdown，直接用
+        _comment = _SubmissionComment(
+            req_no=req_no,
+            author_email=actor_email,
+            body_markdown=payload.reject_details_markdown,
+            is_internal=False,
+            parent_id=None,
+            created_at=datetime.utcnow(),
+        )
+        db.add(_comment)
+        db.flush()
+        _update_submission_discussion_stats(req_no, db)
+        comment_id = _comment.id
+    else:
+        comment_id = create_reject_comment(
+            req_no=req_no,
+            reasons=payload.reasons,
+            note=payload.note,
+            actor_email=actor_email,
+            db=db,
+        )
+
+    # 更新 history meta 加入 comment_id（cross-link）
+    latest_history = (
+        db.query(SubmissionHistory)
+        .filter(SubmissionHistory.req_no == req_no, SubmissionHistory.action == "reject")
+        .order_by(SubmissionHistory.created_at.desc())
+        .first()
+    )
+    if latest_history:
+        existing_meta = json.loads(latest_history.meta) if latest_history.meta else {}
+        existing_meta["comment_id"] = comment_id
+        latest_history.meta = json.dumps(existing_meta, ensure_ascii=False)
+
     db.commit()
     db.refresh(obj)
     await notify_event("reject", obj, actor=actor, note=payload.note)
@@ -138,6 +179,7 @@ async def reject_submission(
         "action": "reject",
         "status": obj.status,
         "rejection_reasons": payload.reasons,
+        "comment_id": comment_id,
     }
 
 

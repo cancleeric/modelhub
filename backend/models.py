@@ -1,7 +1,7 @@
 import os
 from datetime import datetime
-from sqlalchemy import Boolean, Column, Integer, String, Float, DateTime, JSON, create_engine, text
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy import Boolean, Column, Integer, String, Float, DateTime, JSON, Text, ForeignKey, create_engine, text
+from sqlalchemy.orm import DeclarativeBase, sessionmaker, relationship
 
 # P3-1: 從 env 讀 DATABASE_URL；未設則用 SQLite（向後相容）
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:////app/data/modelhub.db")
@@ -98,6 +98,62 @@ class Submission(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     # P3-25: 最後更新時間（update_submission() 自動設定）
     updated_at = Column(DateTime, nullable=True)
+    # --- M22: Discussion denormalized 欄位 ---
+    discussion_count = Column(Integer, default=0, nullable=False)
+    last_activity_at = Column(DateTime, nullable=True)
+
+
+class SubmissionComment(Base):
+    """M22: Discussion 留言"""
+
+    __tablename__ = "submission_comments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    req_no = Column(String, nullable=False, index=True)       # FK → submissions.req_no（不用外鍵約束，保持彈性）
+    author_email = Column(String, nullable=False)
+    body_markdown = Column(Text, nullable=False)
+    is_internal = Column(Boolean, default=False, nullable=False)
+    parent_id = Column(Integer, ForeignKey("submission_comments.id"), nullable=True)
+    deleted_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, nullable=True)
+
+    # ORM 關聯（optional，方便 query）
+    # self-referential 1 層 reply：parent.id → child.parent_id
+    replies = relationship(
+        "SubmissionComment",
+        foreign_keys="SubmissionComment.parent_id",
+        lazy="dynamic",
+        primaryjoin="SubmissionComment.id == SubmissionComment.parent_id",
+    )
+    attachments = relationship(
+        "SubmissionAttachment",
+        foreign_keys="SubmissionAttachment.comment_id",
+        back_populates="comment",
+        lazy="select",
+    )
+
+
+class SubmissionAttachment(Base):
+    """M22: 工單附件"""
+
+    __tablename__ = "submission_attachments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    req_no = Column(String, nullable=False, index=True)
+    comment_id = Column(Integer, ForeignKey("submission_comments.id"), nullable=True)
+    filename = Column(String, nullable=False)
+    size_bytes = Column(Integer, nullable=False)
+    mime_type = Column(String, nullable=False)
+    storage_path = Column(String, nullable=False)
+    uploaded_by = Column(String, nullable=False)
+    uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    comment = relationship(
+        "SubmissionComment",
+        foreign_keys=[comment_id],
+        back_populates="attachments",
+    )
 
 
 class ModelVersion(Base):
@@ -250,6 +306,9 @@ _MIGRATIONS = [
     # M18-1: Cross-Resource Auto Retry — TrainingQueue.attempted_resources
     ("training_queue", "attempted_resources",  "TEXT DEFAULT '[]'"),
     # M18-4: events 表由 create_all 建立（SystemEvent），此列僅佔位
+    # M22: Discussion denormalized 欄位（submission_comments / submission_attachments 由 create_all 建表）
+    ("submissions", "discussion_count",        "INTEGER DEFAULT 0"),
+    ("submissions", "last_activity_at",        "DATETIME"),
 ]
 
 
