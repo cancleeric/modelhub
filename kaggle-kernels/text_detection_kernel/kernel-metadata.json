@@ -7,7 +7,10 @@
   "is_private": true,
   "enable_gpu": true,
   "enable_internet": true,
-  "dataset_sources": ["boardgamegroup/aicad-text-detection-yolo"],
+  "dataset_sources": [
+    "boardgamegroup/aicad-text-detection-yolo",
+    "boardgamegroup/mh-2026-006-checkpoint"
+  ],
   "competition_sources": [],
   "kernel_sources": [],
   "req_no": "MH-2026-006"
