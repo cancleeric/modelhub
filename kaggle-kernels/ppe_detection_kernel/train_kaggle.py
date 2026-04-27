@@ -75,7 +75,7 @@ OUT_DIR = WORK_DIR / REQ_NO.lower()
 RESULT_PATH = WORK_DIR / "result.json"
 YOLO_DIR = WORK_DIR / "dataset"
 SEED = 42
-EPOCHS = int(os.getenv("MH018_EPOCHS", "200"))
+EPOCHS = int(os.getenv("MH018_EPOCHS", "150"))  # v2: 100→150
 IMGSZ = int(os.getenv("MH018_IMGSZ", "640"))
 PATIENCE = 60
 
@@ -219,7 +219,9 @@ model.train(
     save=True,
     plots=True,
     verbose=True,
+    # v2 augmentation: mosaic + mixup（YOLOv8 內建）
     mosaic=1.0,
+    mixup=0.1,
     hsv_h=0.015,
     hsv_s=0.7,
     hsv_v=0.4,
@@ -228,6 +230,10 @@ model.train(
     scale=0.5,
     degrees=5.0,
     copy_paste=0.1,
+    # v2: cosine learning rate scheduler
+    cos_lr=True,
+    lr0=0.01,
+    lrf=0.01,
 )
 train_seconds = int(time.time() - t_start)
 print(f"\n[DONE] train elapsed {train_seconds}s = {train_seconds/3600:.2f}h", flush=True)
@@ -267,7 +273,7 @@ else:
 
 result = {
     "req_no": REQ_NO,
-    "run": "kaggle_v1_cuda",
+    "run": "kaggle_v2_cuda",
     "arch": "yolov8m",
     "device": DEVICE,
     "epochs": EPOCHS,
