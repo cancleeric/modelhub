@@ -236,6 +236,24 @@ class SubmissionHistory(Base):
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
+class CommentNotification(Base):
+    """
+    M22 Phase 4 — 留言通知表
+
+    觸發點：建 comment 時，根據 recipients 算法（原 submitter + thread 參與者 + @mention 者）
+    插入通知紀錄。不發 CMC，只寫 DB。
+    """
+
+    __tablename__ = "comment_notifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    comment_id = Column(Integer, ForeignKey("submission_comments.id"), nullable=False, index=True)
+    recipient_email = Column(String, nullable=False, index=True)
+    type = Column(String, nullable=False)   # mention / reply / new_comment
+    read_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class SystemEvent(Base):
     """
     系統事件日誌（M18-4）— 供 brain-console UI 顯示的結構化事件流。
@@ -309,6 +327,7 @@ _MIGRATIONS = [
     # M22: Discussion denormalized 欄位（submission_comments / submission_attachments 由 create_all 建表）
     ("submissions", "discussion_count",        "INTEGER DEFAULT 0"),
     ("submissions", "last_activity_at",        "DATETIME"),
+    # M22 Phase 4: comment_notifications 由 create_all 建表（此列僅佔位）
 ]
 
 

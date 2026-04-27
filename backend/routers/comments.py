@@ -34,6 +34,7 @@ from models import (
     SubmissionHistory,
     get_db,
 )
+from mention_parser import parse_mentions
 
 _logger = logging.getLogger("modelhub.routers.comments")
 
@@ -73,6 +74,7 @@ class CommentOut(BaseModel):
     deleted_at: Optional[datetime]
     attachments: List[AttachmentOut] = []
     replies: List["CommentOut"] = []
+    mentioned_users: List[str] = []   # M22 Phase 4：@mention 解析結果
 
     model_config = {"from_attributes": True}
 
@@ -211,6 +213,7 @@ def _build_comment_out(comment: SubmissionComment, include_internal: bool) -> Op
         deleted_at=comment.deleted_at,
         attachments=attachments,
         replies=children,
+        mentioned_users=parse_mentions(comment.body_markdown),
     )
 
 
@@ -355,6 +358,20 @@ async def create_comment(
         note=f"comment_id={comment.id}",
         meta={"comment_id": comment.id, "is_internal": payload.is_internal},
     )
+
+    # M22 Phase 4: 通知（mention / reply / new_comment）
+    try:
+        from comment_notify import create_comment_notifications
+        sub = db.query(Submission).filter(Submission.req_no == req_no).first()
+        create_comment_notifications(
+            comment=comment,
+            submission=sub,
+            db=db,
+            author_email=author,
+        )
+    except Exception as _e:
+        _logger.warning("notification creation failed: %s", _e)
+
     db.commit()
     db.refresh(comment)
 
@@ -479,3 +496,97 @@ def create_reject_comment(
     )
 
     return comment.id
+
+
+# ---------------------------------------------------------------------------
+# GET /api/comments/search — M22 Phase 4 全文搜尋
+# ---------------------------------------------------------------------------
+
+class CommentSearchOut(BaseModel):
+    id: int
+    req_no: str
+    author_email: str
+    body_markdown: str
+    is_internal: bool
+    parent_id: Optional[int]
+    created_at: datetime
+    mentioned_users: List[str] = []
+
+    model_config = {"from_attributes": True}
+
+
+@router.get("/comments/search", response_model=List[CommentSearchOut])
+async def search_comments(
+    q: str = Query(..., min_length=1, description="搜尋關鍵字"),
+    req_no: Optional[str] = Query(default=None, description="限定工單（可省略）"),
+    author: Optional[str] = Query(default=None, description="限定 author email"),
+    since: Optional[str] = Query(default=None, description="起始時間 ISO8601（UTC）"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    current_user: dict = CurrentUserOrApiKey,
+):
+    """
+    搜尋留言。使用 SQLite LIKE / PostgreSQL ilike。
+    - q：必填，body_markdown 模糊比對
+    - req_no：可選，限定工單
+    - author：可選，限定留言者 email
+    - since：可選，ISO8601 UTC 時間，只回傳 created_at >= since 的結果
+    - tenant 隔離：非特權使用者只能搜自己公司的工單留言
+    """
+    include_internal = _is_privileged(current_user)
+
+    query = db.query(SubmissionComment).filter(
+        SubmissionComment.body_markdown.ilike(f"%{q}%"),
+        SubmissionComment.deleted_at.is_(None),
+    )
+
+    if not include_internal:
+        query = query.filter(SubmissionComment.is_internal.is_(False))
+
+    if req_no:
+        # 同時做 tenant 驗證
+        _assert_submission_access(req_no, db, current_user)
+        query = query.filter(SubmissionComment.req_no == req_no)
+    elif not _is_privileged(current_user):
+        # 一般使用者只能搜自己公司的工單留言
+        user_company = current_user.get("company") or current_user.get("tenant")
+        if user_company:
+            # join submissions 過濾 company
+            query = query.join(
+                Submission,
+                Submission.req_no == SubmissionComment.req_no,
+            ).filter(Submission.company == user_company)
+
+    if author:
+        query = query.filter(SubmissionComment.author_email.ilike(f"%{author}%"))
+
+    if since:
+        try:
+            since_dt = datetime.fromisoformat(since.rstrip("Z"))
+            query = query.filter(SubmissionComment.created_at >= since_dt)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="since 格式錯誤，需為 ISO8601 UTC（e.g. 2026-01-01T00:00:00）")
+
+    offset = (page - 1) * page_size
+    rows = (
+        query
+        .order_by(SubmissionComment.created_at.desc())
+        .offset(offset)
+        .limit(page_size)
+        .all()
+    )
+
+    return [
+        CommentSearchOut(
+            id=r.id,
+            req_no=r.req_no,
+            author_email=r.author_email,
+            body_markdown=r.body_markdown,
+            is_internal=r.is_internal,
+            parent_id=r.parent_id,
+            created_at=r.created_at,
+            mentioned_users=parse_mentions(r.body_markdown),
+        )
+        for r in rows
+    ]

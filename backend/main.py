@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from routers import submissions, registry, actions, kaggle, api_keys, predict, health, inference, queue as queue_router
 from routers import comments as comments_router
 from routers import attachments as attachments_router
+from routers import notifications as notifications_router
 from models import init_db
 from pollers.kaggle_poller import start_scheduler, stop_scheduler
 import pollers.lightning_poller as _lightning_poller
@@ -78,6 +79,7 @@ app.include_router(inference.router, prefix="/v1", tags=["inference"])
 app.include_router(queue_router.router, prefix="/api/queue", tags=["queue"])
 app.include_router(comments_router.router, prefix="/api", tags=["comments"])
 app.include_router(attachments_router.router, prefix="/api", tags=["attachments"])
+app.include_router(notifications_router.router, prefix="/api", tags=["notifications"])
 
 
 @app.get("/health")
