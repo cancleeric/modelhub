@@ -1,0 +1,15 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.0
+httpx==0.27.0
+pydantic==2.9.0
+python-multipart==0.0.9
+prometheus-client==0.20.0
+# ML loaders — lazy import, 推論時才用
+ultralytics
+xgboost>=2.0
+joblib>=1.3
+sentence-transformers>=2.2
+transformers>=4.38
+torch>=2.1
+Pillow>=10.0
+apscheduler==3.10.4
