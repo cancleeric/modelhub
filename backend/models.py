@@ -90,6 +90,8 @@ class Submission(Base):
     blocked_reason = Column(String, nullable=True)
     # --- Sprint 13 P2-A: per-class metrics（JSON string, {class_name: ap50}）---
     per_class_metrics = Column(String, nullable=True)
+    # --- External model registry（EXT- 工單）---
+    external_source = Column(Text, nullable=True)      # e.g. huggingface://meta-llama/Llama-Guard-3-1B
     # --- Sprint 15 P2-3: 訓練資源記錄（kaggle/local_mps/ssh@host）---
     training_resource = Column(String, nullable=True)
     # --- Sprint 17 P1-4: Lightning Studio 名稱 ---
@@ -187,6 +189,11 @@ class ModelVersion(Base):
     dataset_snapshot_id = Column(String(255), nullable=True)   # dataset 版本識別（如 Kaggle dataset id / hash）
     train_commit_hash = Column(String(40), nullable=True)       # 訓練腳本 Git SHA（36 chars + buffer）
     hyperparams_json = Column(JSON, nullable=True)              # 完整 hyperparams dict（從 result.json 讀取）
+    # External model registry（0007_external_model_registry）
+    external_source = Column(Text, nullable=True)              # e.g. huggingface://meta-llama/Llama-Guard-3-1B
+    external_sha256 = Column(String(64), nullable=True)        # sha256 of local model snapshot
+    size_bytes = Column(Integer, nullable=True)                # 本機 model dir 總大小（bytes）
+    last_used_at = Column(DateTime, nullable=True)             # Aegis 最後一次查詢此 model path 的時間
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -328,6 +335,12 @@ _MIGRATIONS = [
     ("submissions", "discussion_count",        "INTEGER DEFAULT 0"),
     ("submissions", "last_activity_at",        "DATETIME"),
     # M22 Phase 4: comment_notifications 由 create_all 建表（此列僅佔位）
+    # 0007_external_model_registry: 外部 pretrained model 登記欄位
+    ("submissions",    "external_source",  "TEXT"),
+    ("model_versions", "external_source",  "TEXT"),
+    ("model_versions", "external_sha256",  "VARCHAR(64)"),
+    ("model_versions", "size_bytes",       "INTEGER"),
+    ("model_versions", "last_used_at",     "DATETIME"),
 ]
 
 
