@@ -10,7 +10,7 @@ services:
       - /Users/yinghaowang/HurricaneCore/docker-data/modelhub/db:/app/data
       - /Users/yinghaowang/HurricaneCore/docker-data/modelhub/models:/app/data/models
       # Sprint 6.1: Kaggle credential（host 若沒有該檔會 bind 空目錄，poller 會自動 skip）
-      - /Users/yinghaowang/HurricaneCore/docker-data/modelhub/kaggle:/root/.kaggle:ro
+      - /Users/yinghaowang/HurricaneCore/docker-data/modelhub/kaggle:/home/appuser/.kaggle:ro
       # Persistent logs（訓練 poller 產生的 run log）
       - /Users/yinghaowang/HurricaneCore/docker-data/modelhub/logs:/app/logs
       # Kaggle kernel output 下載目錄（bind mount 避免重啟後遺失）
@@ -49,6 +49,7 @@ services:
   modelhub-web:
     image: node:20-alpine
     container_name: modelhub-web-dev
+    user: "1000:1000"
     working_dir: /app
     volumes:
       - ./frontend:/app
