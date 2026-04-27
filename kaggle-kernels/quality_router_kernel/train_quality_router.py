@@ -4,6 +4,7 @@
 # 目標：val_accuracy >= 0.90
 # 預估：< 2 hr（遠低於 9 小時上限）
 
+import json
 import os
 import sys
 import time
@@ -231,6 +232,45 @@ print(f"Best  val_acc : {best_val_acc:.4f}")
 print(f"Best model    : {BEST_PATH}")
 
 if best_val_acc >= 0.90:
+    verdict, tier = "pass", "達標"
     print("Target ACHIEVED (best_val_acc >= 0.90)")
 else:
+    verdict, tier = "fail", "未達標"
     print(f"Target NOT reached — best={best_val_acc:.4f}, need 0.90")
+
+# ---------------------------------------------------------------------------
+# result.json — modelhub poller 讀取此檔回填 DB
+# ---------------------------------------------------------------------------
+RESULT_PATH_JSON = os.path.join(WORK_DIR, "result.json")
+
+per_class_acc_dict = {}
+for i, cls_name in enumerate(class_names):
+    per_class_correct = int(conf[i, i])
+    per_class_total = int(conf[i].sum())
+    per_class_acc_dict[cls_name] = round(
+        per_class_correct / per_class_total if per_class_total > 0 else 0.0, 4
+    )
+
+result = {
+    "req_no": "MH-2026-011",
+    "run": "kaggle_cuda",
+    "arch": "efficientnet_b0",
+    "device": str(device),
+    "epochs": EPOCHS,
+    "batch_size": BATCH_SIZE,
+    "img_size": IMG_SIZE,
+    "n_train": len(train_subset),
+    "n_val": len(val_subset),
+    "classes": class_names,
+    "best_val_acc": round(best_val_acc, 4),
+    "final_val_acc": round(float(final_acc), 4),
+    "per_class_acc": per_class_acc_dict,
+    "verdict": verdict,
+    "tier": tier,
+    "target": "val_acc >= 0.90",
+    "best_path": BEST_PATH,
+}
+with open(RESULT_PATH_JSON, "w") as _f:
+    json.dump(result, _f, ensure_ascii=False, indent=2)
+print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)
+print(f"\n結論：{tier}", flush=True)

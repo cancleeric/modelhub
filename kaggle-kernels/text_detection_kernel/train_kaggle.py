@@ -46,7 +46,7 @@ RESULT_PATH = WORK_DIR / "result.json"
 
 YOLO_DIR = WORK_DIR / "dataset"
 SEED = 42
-EPOCHS = int(os.getenv("MH006_EPOCHS", "100"))
+EPOCHS = int(os.getenv("MH006_EPOCHS", "20"))  # retry: resume 加訓 20 epochs (CEO Anderson 2026-04-27)
 IMGSZ = int(os.getenv("MH006_IMGSZ", "640"))
 PATIENCE = 20
 

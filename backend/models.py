@@ -1,7 +1,7 @@
 import os
 from datetime import datetime
-from sqlalchemy import Boolean, Column, Integer, String, Float, DateTime, JSON, create_engine, text
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy import Boolean, Column, Integer, String, Float, DateTime, JSON, Text, ForeignKey, create_engine, text
+from sqlalchemy.orm import DeclarativeBase, sessionmaker, relationship
 
 # P3-1: 從 env 讀 DATABASE_URL；未設則用 SQLite（向後相容）
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:////app/data/modelhub.db")
@@ -90,6 +90,8 @@ class Submission(Base):
     blocked_reason = Column(String, nullable=True)
     # --- Sprint 13 P2-A: per-class metrics（JSON string, {class_name: ap50}）---
     per_class_metrics = Column(String, nullable=True)
+    # --- External model registry（EXT- 工單）---
+    external_source = Column(Text, nullable=True)      # e.g. huggingface://meta-llama/Llama-Guard-3-1B
     # --- Sprint 15 P2-3: 訓練資源記錄（kaggle/local_mps/ssh@host）---
     training_resource = Column(String, nullable=True)
     # --- Sprint 17 P1-4: Lightning Studio 名稱 ---
@@ -98,6 +100,62 @@ class Submission(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     # P3-25: 最後更新時間（update_submission() 自動設定）
     updated_at = Column(DateTime, nullable=True)
+    # --- M22: Discussion denormalized 欄位 ---
+    discussion_count = Column(Integer, default=0, nullable=False)
+    last_activity_at = Column(DateTime, nullable=True)
+
+
+class SubmissionComment(Base):
+    """M22: Discussion 留言"""
+
+    __tablename__ = "submission_comments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    req_no = Column(String, nullable=False, index=True)       # FK → submissions.req_no（不用外鍵約束，保持彈性）
+    author_email = Column(String, nullable=False)
+    body_markdown = Column(Text, nullable=False)
+    is_internal = Column(Boolean, default=False, nullable=False)
+    parent_id = Column(Integer, ForeignKey("submission_comments.id"), nullable=True)
+    deleted_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, nullable=True)
+
+    # ORM 關聯（optional，方便 query）
+    # self-referential 1 層 reply：parent.id → child.parent_id
+    replies = relationship(
+        "SubmissionComment",
+        foreign_keys="SubmissionComment.parent_id",
+        lazy="dynamic",
+        primaryjoin="SubmissionComment.id == SubmissionComment.parent_id",
+    )
+    attachments = relationship(
+        "SubmissionAttachment",
+        foreign_keys="SubmissionAttachment.comment_id",
+        back_populates="comment",
+        lazy="select",
+    )
+
+
+class SubmissionAttachment(Base):
+    """M22: 工單附件"""
+
+    __tablename__ = "submission_attachments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    req_no = Column(String, nullable=False, index=True)
+    comment_id = Column(Integer, ForeignKey("submission_comments.id"), nullable=True)
+    filename = Column(String, nullable=False)
+    size_bytes = Column(Integer, nullable=False)
+    mime_type = Column(String, nullable=False)
+    storage_path = Column(String, nullable=False)
+    uploaded_by = Column(String, nullable=False)
+    uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    comment = relationship(
+        "SubmissionComment",
+        foreign_keys=[comment_id],
+        back_populates="attachments",
+    )
 
 
 class ModelVersion(Base):
@@ -131,6 +189,11 @@ class ModelVersion(Base):
     dataset_snapshot_id = Column(String(255), nullable=True)   # dataset 版本識別（如 Kaggle dataset id / hash）
     train_commit_hash = Column(String(40), nullable=True)       # 訓練腳本 Git SHA（36 chars + buffer）
     hyperparams_json = Column(JSON, nullable=True)              # 完整 hyperparams dict（從 result.json 讀取）
+    # External model registry（0007_external_model_registry）
+    external_source = Column(Text, nullable=True)              # e.g. huggingface://meta-llama/Llama-Guard-3-1B
+    external_sha256 = Column(String(64), nullable=True)        # sha256 of local model snapshot
+    size_bytes = Column(Integer, nullable=True)                # 本機 model dir 總大小（bytes）
+    last_used_at = Column(DateTime, nullable=True)             # Aegis 最後一次查詢此 model path 的時間
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -161,6 +224,8 @@ class TrainingQueue(Base):
     target_resource = Column(String, nullable=True)                   # kaggle/lightning/ssh/local
     retry_count = Column(Integer, default=0)
     error_reason = Column(String, nullable=True)
+    # M18-1: Cross-Resource Auto Retry — 已嘗試的 resource list（TEXT JSON）
+    attempted_resources = Column(String, nullable=True, default="[]")
 
 
 class SubmissionHistory(Base):
@@ -175,6 +240,41 @@ class SubmissionHistory(Base):
     reasons = Column(String, nullable=True)       # JSON array string
     note = Column(String, nullable=True)
     meta = Column(String, nullable=True)          # JSON blob 任意附加資料
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class CommentNotification(Base):
+    """
+    M22 Phase 4 — 留言通知表
+
+    觸發點：建 comment 時，根據 recipients 算法（原 submitter + thread 參與者 + @mention 者）
+    插入通知紀錄。不發 CMC，只寫 DB。
+    """
+
+    __tablename__ = "comment_notifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    comment_id = Column(Integer, ForeignKey("submission_comments.id"), nullable=False, index=True)
+    recipient_email = Column(String, nullable=False, index=True)
+    type = Column(String, nullable=False)   # mention / reply / new_comment
+    read_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class SystemEvent(Base):
+    """
+    系統事件日誌（M18-4）— 供 brain-console UI 顯示的結構化事件流。
+    例：resource_all_exhausted、health_alert 等。
+    """
+
+    __tablename__ = "events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    event_type = Column(String, nullable=False, index=True)   # e.g. resource_all_exhausted
+    req_no = Column(String, nullable=True, index=True)        # 關聯工單（可 NULL 代表系統級事件）
+    severity = Column(String, nullable=False, default="warning")  # info/warning/error
+    message = Column(String, nullable=False)
+    meta = Column(String, nullable=True)                      # JSON blob
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
@@ -224,10 +324,23 @@ _MIGRATIONS = [
     # Sprint 20: 訓練隊列（SQLite 用 create_all 建表，此列僅佔位確保 migration 完整性）
     # P3-25: updated_at
     ("submissions", "updated_at", "DATETIME"),
-    # P1-3: ModelVersion 可追溯性欄位（最後一筆手動 migration，新 migration 請走 Alembic）
+    # P1-3: ModelVersion 可追溯性欄位
     ("model_versions", "dataset_snapshot_id", "VARCHAR(255)"),
     ("model_versions", "train_commit_hash",    "VARCHAR(40)"),
     ("model_versions", "hyperparams_json",     "TEXT"),
+    # M18-1: Cross-Resource Auto Retry — TrainingQueue.attempted_resources
+    ("training_queue", "attempted_resources",  "TEXT DEFAULT '[]'"),
+    # M18-4: events 表由 create_all 建立（SystemEvent），此列僅佔位
+    # M22: Discussion denormalized 欄位（submission_comments / submission_attachments 由 create_all 建表）
+    ("submissions", "discussion_count",        "INTEGER DEFAULT 0"),
+    ("submissions", "last_activity_at",        "DATETIME"),
+    # M22 Phase 4: comment_notifications 由 create_all 建表（此列僅佔位）
+    # 0007_external_model_registry: 外部 pretrained model 登記欄位
+    ("submissions",    "external_source",  "TEXT"),
+    ("model_versions", "external_source",  "TEXT"),
+    ("model_versions", "external_sha256",  "VARCHAR(64)"),
+    ("model_versions", "size_bytes",       "INTEGER"),
+    ("model_versions", "last_used_at",     "DATETIME"),
 ]
 
 

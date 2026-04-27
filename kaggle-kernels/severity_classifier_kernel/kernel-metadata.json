@@ -1,0 +1,14 @@
+{
+  "id": "boardgamegroup/mh-2026-022-aegis-severity-classifier",
+  "title": "MH-2026-022 Aegis Severity Auto-classifier XGBoost",
+  "code_file": "train_severity_classifier.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": false,
+  "enable_internet": true,
+  "dataset_sources": ["boardgamegroup/aegis-severity-corpus"],
+  "competition_sources": [],
+  "kernel_sources": [],
+  "req_no": "MH-2026-022"
+}

@@ -55,6 +55,11 @@ def _make_submission(req_no: str, status: str = "approved",
 class TestQueueManagerPendingKernel:
     """QueueManager.mark_pending_kernel / reset_pending_kernel 基本行為"""
 
+    def setup_method(self):
+        # 強制重新 import 真實的 queue_manager（避免其他 test 安裝的 fake 污染）
+        import sys
+        sys.modules.pop("queue_manager", None)
+
     def test_mark_pending_kernel_sets_status(self):
         """mark_pending_kernel 應將 entry.status 改為 pending_kernel"""
         from queue_manager import QueueManager
@@ -271,6 +276,11 @@ class TestDoDispatchKernelPrecheck:
 
 class TestAttachKernelResetsQueue:
     """attach-kernel 成功後應呼叫 QueueManager.reset_pending_kernel"""
+
+    def setup_method(self):
+        # 強制重新 import 真實的 queue_manager
+        import sys
+        sys.modules.pop("queue_manager", None)
 
     def test_attach_kernel_resets_pending_kernel_entry(self):
         """

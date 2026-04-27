@@ -10,7 +10,7 @@ services:
       - /Users/yinghaowang/HurricaneCore/docker-data/modelhub/db:/app/data
       - /Users/yinghaowang/HurricaneCore/docker-data/modelhub/models:/app/data/models
       # Sprint 6.1: Kaggle credential（host 若沒有該檔會 bind 空目錄，poller 會自動 skip）
-      - /Users/yinghaowang/HurricaneCore/docker-data/modelhub/kaggle:/root/.kaggle:ro
+      - /Users/yinghaowang/HurricaneCore/docker-data/modelhub/kaggle:/home/appuser/.kaggle:ro
       # Persistent logs（訓練 poller 產生的 run log）
       - /Users/yinghaowang/HurricaneCore/docker-data/modelhub/logs:/app/logs
       # Kaggle kernel output 下載目錄（bind mount 避免重啟後遺失）
@@ -49,6 +49,7 @@ services:
   modelhub-web:
     image: node:20-alpine
     container_name: modelhub-web-dev
+    user: "1000:1000"
     working_dir: /app
     volumes:
       - ./frontend:/app
@@ -58,6 +59,32 @@ services:
     restart: unless-stopped
     networks:
       - squid_dev_network
+
+  modelhub-inference:
+    build: ./inference-server
+    container_name: modelhub-inference-dev
+    ports:
+      - "127.0.0.1:8951:8951"
+    volumes:
+      - ./inference-server:/app
+      # bind mount 唯讀：models 共用 single source，inference 不寫 model file
+      - /Users/yinghaowang/HurricaneCore/docker-data/modelhub/models:/models:ro
+    environment:
+      # modelhub-api 同 network 內走容器名
+      - MODELHUB_API_URL=http://modelhub-api-dev:8000
+      # 取得方式：hvault get hurricanecore/dev/MODELHUB_API_KEY
+      - MODELHUB_API_KEY=${MODELHUB_API_KEY}
+      # LRU 上限（預設 3）
+      - MAX_LOADED_MODELS=${MAX_LOADED_MODELS:-3}
+      # Registry refresh 間隔（秒，預設 300）
+      - REGISTRY_REFRESH_SECONDS=${REGISTRY_REFRESH_SECONDS:-300}
+      # bind mount 路徑（對應上方 volumes）
+      - MODELS_MOUNT=/models
+    restart: unless-stopped
+    networks:
+      - squid_dev_network
+    depends_on:
+      - modelhub-api
 
 networks:
   squid_dev_network:

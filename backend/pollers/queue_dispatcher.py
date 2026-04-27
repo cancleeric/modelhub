@@ -3,8 +3,14 @@ pollers/queue_dispatcher.py — 訓練隊列派發器（Sprint 20 Task 20-4）
 
 每 30 秒執行一次，從持久化 TrainingQueue 取下一筆 waiting 條目並派發訓練。
 MAX_CONCURRENT_TRAININGS=2 上限，超過時跳過本次。
+
+M18: Cross-Resource Auto Retry
+- dispatch 失敗時，把目前 resource 加入 attempted_resources
+- 若 retry_count < MAX_DISPATCH_RETRY（預設 2），用 get_fallback_resource 選下一個重試
+- 三個都失敗才 mark_failed，同時寫 events 表（resource_all_exhausted）
 """
 
+import json
 import logging
 import os
 from datetime import datetime
@@ -16,6 +22,7 @@ logger = logging.getLogger("modelhub.poller.queue_dispatcher")
 
 DISPATCH_INTERVAL_SECONDS = int(os.environ.get("MODELHUB_DISPATCH_INTERVAL", "30"))
 MAX_CONCURRENT_TRAININGS = int(os.environ.get("MODELHUB_MAX_CONCURRENT", "2"))
+MAX_DISPATCH_RETRY = int(os.environ.get("MODELHUB_MAX_DISPATCH_RETRY", "2"))
 
 _scheduler = None
 _last_dispatch_at: Optional[datetime] = None
@@ -78,37 +85,9 @@ def dispatch_next() -> dict:
             req_no, entry.priority, entry_id,
         )
 
-        # 執行實際訓練派發
-        success, resource, reason = _do_dispatch(req_no, db)
-
-        if success:
-            QueueManager.mark_running(db, entry_id, target_resource=resource)
-            _append_history(db, req_no, "queue_dispatched",
-                            note=f"訓練派發成功，resource={resource}",
-                            meta={"entry_id": entry_id, "resource": resource})
-            db.commit()
-            logger.info("dispatch_next: req=%s dispatched to %s", req_no, resource)
-            return {"dispatched": req_no, "resource": resource}
-        elif resource == "PENDING_KERNEL":
-            # Race condition：Kaggle 為最佳資源但 kernel 尚未 attach
-            # 標記為 pending_kernel，讓 attach-kernel endpoint 完成後重置為 waiting
-            QueueManager.mark_pending_kernel(db, entry_id)
-            _append_history(db, req_no, "queue_pending_kernel",
-                            note="Kaggle kernel 尚未 attach，等待 attach-kernel 後自動重試",
-                            meta={"entry_id": entry_id})
-            db.commit()
-            logger.info(
-                "dispatch_next: req=%s pending_kernel (kernel not yet attached)", req_no
-            )
-            return {"pending_kernel": req_no, "reason": reason}
-        else:
-            QueueManager.mark_failed(db, entry_id, reason)
-            _append_history(db, req_no, "queue_dispatch_failed",
-                            note=f"派發失敗：{reason}",
-                            meta={"entry_id": entry_id, "reason": reason})
-            db.commit()
-            logger.warning("dispatch_next: req=%s dispatch failed: %s", req_no, reason)
-            return {"failed": req_no, "reason": reason}
+        # 執行實際訓練派發（含 M18 cross-resource retry）
+        result = _do_dispatch_with_retry(req_no, db, entry_id)
+        return result
 
     except Exception as e:
         logger.exception("dispatch_next exception: %s", e)
@@ -178,6 +157,169 @@ def _do_dispatch(req_no: str, db) -> tuple[bool, str, str]:
         return True, resource, ""
     except Exception as e:
         return False, "", str(e)
+
+
+def _do_dispatch_with_retry(req_no: str, db, entry_id: int) -> dict:
+    """
+    M18-2: Cross-Resource Auto Retry 派發邏輯。
+
+    1. 讀取 TrainingQueue entry 的 attempted_resources（JSON list）
+    2. 呼叫 _do_dispatch()
+    3. 若成功 → mark_running，回傳 dispatched
+    4. 若 PENDING_KERNEL → mark_pending_kernel（不計入 retry）
+    5. 若失敗：
+       a. 把 failed resource 加入 attempted_resources
+       b. 若 retry_count < MAX_DISPATCH_RETRY：
+          - 用 get_fallback_resource(attempted) 找下一個
+          - 重設 submission resource hint，mark_dispatching 繼續
+       c. 若 retry 耗盡 → mark_failed + 寫 resource_all_exhausted event
+    """
+    from queue_manager import QueueManager
+    from models import TrainingQueue
+
+    entry = db.query(TrainingQueue).filter(TrainingQueue.id == entry_id).first()
+    if not entry:
+        return {"error": f"entry_id={entry_id} not found"}
+
+    # 讀已嘗試的資源
+    try:
+        attempted = json.loads(entry.attempted_resources or "[]")
+    except (ValueError, TypeError):
+        attempted = []
+
+    # 第一次嘗試
+    success, resource, reason = _do_dispatch(req_no, db)
+
+    if success:
+        QueueManager.mark_running(db, entry_id, target_resource=resource)
+        _append_history(db, req_no, "queue_dispatched",
+                        note=f"訓練派發成功，resource={resource}",
+                        meta={"entry_id": entry_id, "resource": resource})
+        db.commit()
+        logger.info("dispatch_next: req=%s dispatched to %s", req_no, resource)
+        return {"dispatched": req_no, "resource": resource}
+
+    if resource == "PENDING_KERNEL":
+        QueueManager.mark_pending_kernel(db, entry_id)
+        _append_history(db, req_no, "queue_pending_kernel",
+                        note="Kaggle kernel 尚未 attach，等待 attach-kernel 後自動重試",
+                        meta={"entry_id": entry_id})
+        db.commit()
+        logger.info("dispatch_next: req=%s pending_kernel", req_no)
+        return {"pending_kernel": req_no, "reason": reason}
+
+    # 失敗：記錄 attempted resource
+    failed_resource = _extract_failed_resource(resource, reason)
+    if failed_resource and failed_resource not in attempted:
+        attempted.append(failed_resource)
+
+    retry_count = entry.retry_count or 0
+    logger.warning(
+        "dispatch_next: req=%s dispatch failed resource=%s reason=%s retry_count=%d",
+        req_no, failed_resource, reason, retry_count,
+    )
+
+    # M18-2: retry loop
+    while retry_count < MAX_DISPATCH_RETRY:
+        # 找下一個 fallback resource
+        try:
+            from resources.prober import ResourceProber
+            prober = ResourceProber()
+            fallback = prober.get_fallback_resource(attempted=attempted, db=db)
+        except Exception as _pe:
+            logger.warning("dispatch_retry: ResourceProber failed: %s", _pe)
+            fallback = None
+
+        if not fallback:
+            logger.info(
+                "dispatch_retry: req=%s no fallback available after %d retries, attempted=%s",
+                req_no, retry_count + 1, attempted,
+            )
+            break
+
+        fallback_resource = fallback.get("resource", "unknown")
+        retry_count += 1
+
+        # 更新 entry
+        entry.attempted_resources = json.dumps(attempted, ensure_ascii=False)
+        entry.retry_count = retry_count
+        db.commit()
+
+        _append_history(
+            db, req_no, "queue_retry_fallback",
+            note=f"fallback: {failed_resource}→{fallback_resource}（retry {retry_count}/{MAX_DISPATCH_RETRY}）",
+            meta={
+                "entry_id": entry_id,
+                "from_resource": failed_resource,
+                "to_resource": fallback_resource,
+                "retry_count": retry_count,
+                "attempted": attempted,
+            },
+        )
+        db.commit()
+        logger.info(
+            "dispatch_retry: req=%s fallback: %s→%s retry=%d",
+            req_no, failed_resource, fallback_resource, retry_count,
+        )
+
+        # 重試派發（目前邏輯：_do_dispatch 內部會 re-probe，fallback hint 透過 prober 自動選到）
+        success, resource, reason = _do_dispatch(req_no, db)
+
+        if success:
+            QueueManager.mark_running(db, entry_id, target_resource=resource)
+            _append_history(db, req_no, "queue_dispatched",
+                            note=f"retry 派發成功，resource={resource}",
+                            meta={"entry_id": entry_id, "resource": resource, "retry_count": retry_count})
+            db.commit()
+            logger.info("dispatch_retry: req=%s dispatched to %s (retry %d)", req_no, resource, retry_count)
+            return {"dispatched": req_no, "resource": resource, "retry_count": retry_count}
+
+        if resource == "PENDING_KERNEL":
+            QueueManager.mark_pending_kernel(db, entry_id)
+            db.commit()
+            return {"pending_kernel": req_no, "reason": reason}
+
+        # 繼續累積 attempted
+        failed_resource = _extract_failed_resource(resource, reason)
+        if failed_resource and failed_resource not in attempted:
+            attempted.append(failed_resource)
+
+    # 所有 retry 耗盡 → mark_failed
+    final_reason = f"所有 resource 嘗試失敗（attempted={attempted}）: {reason}"
+    QueueManager.mark_failed(db, entry_id, final_reason)
+    _append_history(db, req_no, "queue_dispatch_failed",
+                    note=f"Cross-resource retry 耗盡，派發失敗：{final_reason}",
+                    meta={"entry_id": entry_id, "attempted": attempted, "reason": reason})
+    db.commit()
+    logger.warning("dispatch_next: req=%s all resources exhausted attempted=%s", req_no, attempted)
+
+    # M18-4: 寫 resource_all_exhausted event（不走 CMC）
+    try:
+        from pollers.health_checker import record_resource_all_exhausted
+        record_resource_all_exhausted(db, req_no=req_no, attempted=attempted)
+    except Exception as _evt_err:
+        logger.warning("dispatch_next: failed to write resource_all_exhausted event: %s", _evt_err)
+
+    return {"failed": req_no, "reason": final_reason, "attempted": attempted}
+
+
+def _extract_failed_resource(resource: str, reason: str) -> str:
+    """
+    從 _do_dispatch 回傳的 resource 字串提取標準 resource key。
+    e.g. "kaggle" → "kaggle", "ssh@192.168.50.83" → "ssh@192.168.50.83"
+    空字串或 unknown → "unknown"
+    """
+    if not resource or resource in ("", "unknown"):
+        # 嘗試從 reason 猜
+        reason_lower = (reason or "").lower()
+        if "kaggle" in reason_lower:
+            return "kaggle"
+        if "lightning" in reason_lower:
+            return "lightning"
+        if "ssh" in reason_lower:
+            return "ssh"
+        return "unknown"
+    return resource
 
 
 def start_scheduler():

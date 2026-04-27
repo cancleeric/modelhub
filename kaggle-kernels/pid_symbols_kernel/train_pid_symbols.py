@@ -4,7 +4,7 @@
 # 目標：val_accuracy >= 0.90（misc_instrument >= 0.85）
 # 預估：< 1 hr
 
-import os, sys, time, subprocess
+import json, os, sys, time, subprocess
 
 # 安裝順序：torch cu118 → timm → numpy 1.26.4（同 PID kernel）
 subprocess.check_call([
@@ -158,8 +158,45 @@ print(f"Best  val_acc : {best_acc:.4f}")
 print(f"misc_instrument acc: {misc_acc:.4f} (target >= 0.85)")
 
 if best_acc >= 0.90 and misc_acc >= 0.85:
-    print("✅ 目標達成 (val_acc >= 0.90, misc >= 0.85)")
+    verdict, tier = "pass", "達標"
+    print("Target ACHIEVED (val_acc >= 0.90, misc >= 0.85)")
 elif best_acc >= 0.90:
-    print(f"⚠️  val_acc 達標但 misc_instrument ({misc_acc:.4f}) < 0.85")
+    verdict, tier = "partial", "val_acc 達標但 misc_instrument 未達 0.85"
+    print(f"PARTIAL: val_acc OK but misc_instrument ({misc_acc:.4f}) < 0.85")
 else:
-    print(f"❌ val_acc ({best_acc:.4f}) < 0.90，需繼續訓練")
+    verdict, tier = "fail", "未達標"
+    print(f"FAIL: val_acc ({best_acc:.4f}) < 0.90")
+
+# ---------------------------------------------------------------------------
+# result.json — modelhub poller 讀取此檔回填 DB
+# ---------------------------------------------------------------------------
+RESULT_PATH = os.path.join(WORK_DIR, "result.json")
+per_class_acc_dict = {}
+for i, cls in enumerate(classes):
+    per_class_acc_dict[cls] = round(
+        class_correct[i] / class_total[i] if class_total[i] > 0 else 0.0, 4
+    )
+
+result = {
+    "req_no": "MH-2026-010",
+    "run": "kaggle_cuda",
+    "arch": "mobilenetv2_100",
+    "device": str(next(model.parameters()).device) if list(model.parameters()) else "cuda",
+    "epochs": EPOCHS,
+    "batch_size": BATCH_SIZE,
+    "n_train": len(train_ds),
+    "n_val": len(val_ds),
+    "classes": classes,
+    "best_val_acc": round(best_acc, 4),
+    "final_val_acc": round(final_acc, 4),
+    "misc_instrument_acc": round(misc_acc, 4),
+    "per_class_acc": per_class_acc_dict,
+    "verdict": verdict,
+    "tier": tier,
+    "target": "val_acc >= 0.90 AND misc_instrument >= 0.85",
+    "best_path": BEST_PATH,
+}
+with open(RESULT_PATH, "w") as _f:
+    json.dump(result, _f, ensure_ascii=False, indent=2)
+print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)
+print(f"\n結論：{tier}", flush=True)
