@@ -1,0 +1,14 @@
+{
+  "id": "boardgamegroup/mh-2026-023-aegis-severity-classifier-v2",
+  "title": "MH-2026-023 Aegis Severity Classifier v2 (Human Labels)",
+  "code_file": "train_severity_classifier_v2.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": false,
+  "enable_internet": true,
+  "dataset_sources": ["boardgamegroup/aegis-severity-corpus-v2"],
+  "competition_sources": [],
+  "kernel_sources": [],
+  "req_no": "MH-2026-023"
+}
