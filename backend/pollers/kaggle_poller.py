@@ -154,8 +154,18 @@ def _append_history(db: Session, req_no: str, action: str, meta: Optional[dict] 
 def _read_result_json(dest_dir: str) -> dict:
     """
     直接讀取 kernel output 目錄下的 result.json。
-    若存在且含 map50/map50_95，回傳 metrics dict；否則回傳 {}。
+
+    支援兩種 metrics 格式：
+    1. YOLO / 物件偵測：含 map50 / map50_95 欄位
+    2. OCR：含 cer / exact_match（或 test_cer / test_exact_match）欄位
+       - exact_match 會對應到 map50（作為主要品質指標）
+       - cer 寫入 ocr_cer（供 notes 使用）
+
+    若存在且含支援的指標，回傳解析結果；否則回傳 {}。
     這是最可靠的 metrics 來源（kernel 已標準化輸出）。
+
+    Bug fix (2026-04-27): 原本缺少 OCR 指標支援，導致 MH-009 等 OCR 任務
+    的 metrics 無法寫入 model_versions.map50。
     """
     result_path = Path(dest_dir) / "result.json"
     if not result_path.exists():
@@ -163,6 +173,7 @@ def _read_result_json(dest_dir: str) -> dict:
     try:
         obj = json.loads(result_path.read_text())
         metrics: dict = {}
+        # --- YOLO / 物件偵測格式 ---
         if "map50" in obj:
             metrics["map50"] = float(obj["map50"])
         if "map50_95" in obj:
@@ -172,6 +183,17 @@ def _read_result_json(dest_dir: str) -> dict:
         if "batch_size" in obj:
             metrics["batch_size"] = int(obj["batch_size"])
         per_class = obj.get("per_class_map50") or {}
+
+        # --- OCR 格式（fix）---
+        # exact_match → map50（主要品質指標，0~1 scale 相容）
+        # cer → ocr_cer（保存原始 CER 值）
+        exact_match = obj.get("test_exact_match") or obj.get("exact_match")
+        cer = obj.get("test_cer") or obj.get("val_cer") or obj.get("cer")
+        if exact_match is not None and "map50" not in metrics:
+            metrics["map50"] = float(exact_match)
+        if cer is not None:
+            metrics["ocr_cer"] = float(cer)
+
         return {"metrics": metrics, "per_class": per_class or None}
     except Exception as e:
         logger.warning("_read_result_json failed (%s): %s", result_path, e)
@@ -245,6 +267,25 @@ async def _on_kernel_complete(db: Session, sub: Submission) -> None:
     # 自動計算 pass_fail（依 submission 的 map50_threshold）
     pass_fail: Optional[str] = None
     map50_val = metrics.get("map50")
+
+    # Bug fix (2026-04-27): 若 result.json / log parser 都沒有 map50，
+    # fallback 到 sub.per_class_metrics（Kaggle kernel 可能只輸出 per_class，
+    # 不輸出頂層 map50）。取所有 class mAP50 的平均值作為整體 map50。
+    if map50_val is None and sub.per_class_metrics:
+        try:
+            pc = json.loads(sub.per_class_metrics) if isinstance(sub.per_class_metrics, str) else sub.per_class_metrics
+            if isinstance(pc, dict) and pc:
+                vals = [v for v in pc.values() if isinstance(v, (int, float))]
+                if vals:
+                    map50_val = round(sum(vals) / len(vals), 6)
+                    metrics["map50"] = map50_val
+                    logger.info(
+                        "_on_kernel_complete: req=%s map50=%.4f from per_class_metrics fallback (classes=%s)",
+                        sub.req_no, map50_val, list(pc.keys()),
+                    )
+        except Exception as _pc_e:
+            logger.warning("_on_kernel_complete: per_class_metrics fallback failed: %s", _pc_e)
+
     if map50_val is not None:
         threshold = sub.map50_threshold or 0.0
         pass_fail = _compute_pass_fail(map50_val, threshold)
@@ -252,6 +293,12 @@ async def _on_kernel_complete(db: Session, sub: Submission) -> None:
             "_on_kernel_complete: req=%s map50=%.4f threshold=%.4f → pass_fail=%s",
             sub.req_no, map50_val, threshold, pass_fail,
         )
+
+    # 建 notes：包含 OCR 專屬指標（CER）若有
+    _notes_parts = [f"auto-filled by kaggle-poller at {now.isoformat()}"]
+    if metrics.get("ocr_cer") is not None:
+        _notes_parts.append(f"CER={metrics['ocr_cer']:.4f}")
+    mv_notes = "; ".join(_notes_parts)
 
     mv = ModelVersion(
         req_no=sub.req_no,
@@ -269,7 +316,7 @@ async def _on_kernel_complete(db: Session, sub: Submission) -> None:
         kaggle_kernel_url=f"https://www.kaggle.com/code/{sub.kaggle_kernel_slug}",
         status="pending_acceptance",
         pass_fail=pass_fail,
-        notes=f"auto-filled by kaggle-poller at {now.isoformat()}",
+        notes=mv_notes,
     )
     db.add(mv)
 
