@@ -93,10 +93,12 @@ class SubmissionUpdate(BaseModel):
     dataset_path: Optional[str] = Field(default=None, max_length=500)
     dataset_train_count: Optional[int] = Field(default=None, ge=0)
     expected_delivery: Optional[str] = Field(default=None, max_length=50)
-    reviewer_note: Optional[str] = Field(default=None, max_length=2000)
+    reviewer_note: Optional[str] = Field(default=None, max_length=10000)
     reviewed_by: Optional[str] = Field(default=None, max_length=100)
     reviewed_at: Optional[datetime] = None
     model_output_path: Optional[str] = Field(default=None, max_length=500)
+    # 退件詳細說明（支援 markdown，供 PATCH rejected 工單補充說明用）
+    rejection_note: Optional[str] = Field(default=None)
 
     @field_validator("priority")
     @classmethod
@@ -354,7 +356,7 @@ _EDITABLE_IN_STATUS: dict[str, set[str]] = {
         "dataset_path", "kaggle_dataset_url", "dataset_source", "dataset_count",
         "dataset_val_count", "dataset_test_count", "dataset_train_count",
         "class_count", "label_format", "expected_delivery",
-        "reviewer_note",
+        "reviewer_note", "rejection_note",
     },
     # pending_review / approved / training / trained 允許審查相關欄位（不允許核心規格）
     "pending_review": {

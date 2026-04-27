@@ -316,7 +316,7 @@ export default function SubmissionDetailPage() {
                 ))}
               </ul>
               {sub.rejection_note && (
-                <p className="text-sm text-gray-600 mt-2">審核員補充：{sub.rejection_note}</p>
+                <pre className="text-sm text-gray-600 mt-2 whitespace-pre-wrap font-sans">審核員補充：{"\n"}{sub.rejection_note}</pre>
               )}
 
               <div className="mt-4">
@@ -867,7 +867,7 @@ function InfoCard({ sub }: { sub: Submission }) {
       {sub.reviewer_note && (
         <div className="mt-3 bg-yellow-50 border border-yellow-200 rounded p-3">
           <span className="text-xs font-medium text-yellow-700">審核意見</span>
-          <p className="text-sm text-gray-700 mt-1">{sub.reviewer_note}</p>
+          <pre className="text-sm text-gray-700 mt-1 whitespace-pre-wrap font-sans">{sub.reviewer_note}</pre>
         </div>
       )}
     </div>
