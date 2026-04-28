@@ -1,0 +1,14 @@
+{
+  "id": "boardgamegroup/mh-2026-028-site-object-detection-v3-yolov8l",
+  "title": "MH-2026-028 Site Object Detection v3 yolov8l",
+  "code_file": "train_kaggle.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": ["ultralytics/coco128"],
+  "competition_sources": [],
+  "kernel_sources": [],
+  "req_no": "MH-2026-028"
+}
