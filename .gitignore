@@ -27,6 +27,24 @@ training/**/yolo_dataset/
 # Training run outputs (plots, etc.)
 training/**/yolo_run/
 training/**/resume_run/
+training/**/v2_run/
+training/**/v3_run/
+training/**/augmented_dataset/
+training/**/yolo_v2_dataset/
+training/**/best/
+training/**/result*.json
+training/**/train.log
+training/**/eval_fixed.log
+
+# Dataset (大型資料，不進 repo)
+dataset/
+dataset-tools/
+
+# Model weights (大型二進位，不進 repo)
+weights/
+
+# Frontend test results
+frontend/test-results/
 
 # Kaggle credentials
 kaggle.json
