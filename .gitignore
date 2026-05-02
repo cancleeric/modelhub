@@ -40,6 +40,14 @@ training/**/eval_fixed.log
 dataset/
 dataset-tools/
 
+# backend/datasets 下的大型二進位與執行結果
+backend/datasets/**/*.pt
+backend/datasets/**/*.pth
+backend/datasets/**/yolo_run/
+backend/datasets/**/runs/
+backend/datasets/**/result*.json
+backend/datasets/**/*.log
+
 # Model weights (大型二進位，不進 repo)
 weights/
 
