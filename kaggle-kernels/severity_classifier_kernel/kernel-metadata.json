@@ -1,5 +1,5 @@
 {
-  "id": "boardgamegroup/mh-2026-022-aegis-severity-classifier",
+  "id": "boardgamegroup/mh-2026-022-aegis-severity-auto-classifier-xgboost",
   "title": "MH-2026-022 Aegis Severity Auto-classifier XGBoost",
   "code_file": "train_severity_classifier.py",
   "language": "python",
