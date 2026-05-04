@@ -433,7 +433,6 @@ def _append_training_failed_summary(db: Session, sub: Submission) -> None:
         db,
         req_no=sub.req_no,
         action="training_failed_summary",
-        actor="kaggle-poller",
         meta={
             "partial_map50": parsed_map50,
             "epochs": completed_epochs,
@@ -444,6 +443,12 @@ def _append_training_failed_summary(db: Session, sub: Submission) -> None:
 
 
 async def _on_kernel_error(db: Session, sub: Submission, raw: str) -> None:
+    # 幂等保護：已達終態直接跳過，避免重複處理
+    # training_failed = Kaggle/Lightning 訓練失敗；failed = QA 審查失敗
+    if sub.status in ("training_failed", "failed", "trained", "accepted", "rejected"):
+        logger.debug("_on_kernel_error: req=%s already terminal status=%s, skip", sub.req_no, sub.status)
+        return
+
     now = datetime.utcnow()
     sub.kaggle_status = "error"
     sub.kaggle_status_updated_at = now
@@ -470,9 +475,9 @@ async def _on_kernel_error(db: Session, sub: Submission, raw: str) -> None:
         db.commit()
         return
 
-    # 已達上限 → 真 failed
+    # 已達上限 → training_failed（注意：不是 QA 拒絕用的 "failed"）
     sub.training_completed_at = now
-    sub.status = "failed"
+    sub.status = "training_failed"
     if sub.training_started_at:
         sub.gpu_seconds = int((now - sub.training_started_at).total_seconds())
 
