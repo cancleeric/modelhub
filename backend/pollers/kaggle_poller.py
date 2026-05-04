@@ -433,7 +433,6 @@ def _append_training_failed_summary(db: Session, sub: Submission) -> None:
         db,
         req_no=sub.req_no,
         action="training_failed_summary",
-        actor="kaggle-poller",
         meta={
             "partial_map50": parsed_map50,
             "epochs": completed_epochs,

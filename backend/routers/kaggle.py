@@ -32,10 +32,10 @@ async def attach_kernel(
     obj = db.query(Submission).filter(Submission.req_no == req_no).first()
     if not obj:
         raise HTTPException(status_code=404, detail="Submission not found")
-    if obj.status not in ("approved", "training"):
+    if obj.status not in ("approved", "training", "training_failed"):
         raise HTTPException(
             status_code=422,
-            detail=f"attach-kernel requires status approved/training, current='{obj.status}'",
+            detail=f"attach-kernel requires status approved/training/training_failed, current='{obj.status}'",
         )
 
     now = datetime.utcnow()
@@ -43,7 +43,11 @@ async def attach_kernel(
     obj.kaggle_kernel_version = payload.version
     obj.kaggle_status = "queued"
     obj.kaggle_status_updated_at = now
-    if obj.status == "approved":
+    if obj.status in ("approved", "training_failed"):
+        # training_failed：重置 retry count，讓新一輪重訓可以再 retry
+        if obj.status == "training_failed":
+            obj.retry_count = 0
+            obj.training_completed_at = None
         obj.status = "training"
         obj.training_started_at = now
         obj.total_attempts = (obj.total_attempts or 0) + 1
