@@ -44,7 +44,10 @@ BEST_PATH  = WORK_DIR / "line_seg_best.pth"
 LAST_PATH  = WORK_DIR / "last.pth"
 RESULT_PATH = WORK_DIR / "result.json"
 
-DATA_ROOT  = Path("/kaggle/input/mh-2026-007-line-segmentation-dataset")
+# Kaggle server 2.x 新版路徑 fallback
+_kaggle_new_007 = Path("/kaggle/input/datasets/boardgamegroup/mh-2026-007-line-segmentation-dataset")
+_kaggle_old_007 = Path("/kaggle/input/mh-2026-007-line-segmentation-dataset")
+DATA_ROOT  = _kaggle_new_007 if _kaggle_new_007.exists() else _kaggle_old_007
 IMG_DIR    = DATA_ROOT / "processed" / "images"
 MASK_DIR   = DATA_ROOT / "processed" / "masks"
 

@@ -54,7 +54,10 @@ from xgboost import XGBClassifier
 # ──────────────────────────────────────────────
 # Config
 # ──────────────────────────────────────────────
-DATASET_PATH = Path("/kaggle/input/aegis-severity-corpus-v2/corpus_v1.jsonl")
+# Kaggle server 2.x 新版路徑 fallback
+_ds_new_v2 = Path("/kaggle/input/datasets/boardgamegroup/aegis-severity-corpus-v2/corpus_v1.jsonl")
+_ds_old_v2 = Path("/kaggle/input/aegis-severity-corpus-v2/corpus_v1.jsonl")
+DATASET_PATH = _ds_new_v2 if _ds_new_v2.exists() else _ds_old_v2
 OUTPUT_DIR = Path("/kaggle/working")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 

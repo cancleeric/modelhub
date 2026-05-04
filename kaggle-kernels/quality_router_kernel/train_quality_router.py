@@ -44,8 +44,12 @@ import numpy as np
 # ---------------------------------------------------------------------------
 import zipfile, glob, shutil
 
-# Kaggle 已自動解壓，tier 子目錄直接在 input_root 下
-_input_root = "/kaggle/input/aicad-quality-router-flat"
+# Kaggle server 2.x 新版路徑（boardgamegroup 自有 dataset）
+# fallback 到舊路徑以相容不同 Kaggle 環境
+import os as _os_kr
+_kaggle_new = "/kaggle/input/datasets/boardgamegroup/aicad-quality-router-flat"
+_kaggle_old = "/kaggle/input/aicad-quality-router-flat"
+_input_root = _kaggle_new if _os_kr.path.exists(_kaggle_new) else _kaggle_old
 DATA_DIR = _input_root + "/"
 print(f"[DATA] DATA_DIR = {DATA_DIR}")
 print(f"[DATA] 子目錄: {os.listdir(DATA_DIR) if os.path.exists(DATA_DIR) else '路徑不存在！'}")
