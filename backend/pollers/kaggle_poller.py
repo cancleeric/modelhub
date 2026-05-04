@@ -475,9 +475,9 @@ async def _on_kernel_error(db: Session, sub: Submission, raw: str) -> None:
         db.commit()
         return
 
-    # 已達上限 → 真 failed
+    # 已達上限 → training_failed（注意：不是 QA 拒絕用的 "failed"）
     sub.training_completed_at = now
-    sub.status = "failed"
+    sub.status = "training_failed"
     if sub.training_started_at:
         sub.gpu_seconds = int((now - sub.training_started_at).total_seconds())
 
