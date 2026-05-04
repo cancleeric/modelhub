@@ -208,8 +208,19 @@ def eval_and_write_result(
         result.update(extra_fields)
 
     result_path.write_text(json.dumps(result, ensure_ascii=False, indent=2))
+
+    # Kaggle 環境：同步寫一份到 /kaggle/working/result.json（供 kaggle kernels output 抓取）
+    _kaggle_working = Path("/kaggle/working")
+    if _kaggle_working.exists() and result_path.resolve() != (_kaggle_working / "result.json").resolve():
+        try:
+            (_kaggle_working / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2))
+        except Exception as _e:
+            print(f"[WARN] 無法寫入 /kaggle/working/result.json: {_e}", flush=True)
+
     print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)
     print(f"\n結論：{tier}", flush=True)
+    # 標記行：kaggle_poller 從 log 解析指標用（確保 result.json 無法下載時仍可回填）
+    print("##RESULT_JSON##:" + json.dumps(result, ensure_ascii=False), flush=True)
     return result
 
 

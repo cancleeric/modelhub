@@ -151,9 +151,86 @@ def _append_history(db: Session, req_no: str, action: str, meta: Optional[dict] 
     db.add(row)
 
 
+def _parse_result_obj(obj: dict) -> dict:
+    """
+    將 result dict 轉為 {"metrics": {...}, "per_class": ...} 格式。
+    共用於 _read_result_json（檔案）和 _read_result_json_from_log（log fallback）。
+    """
+    metrics: dict = {}
+    # --- YOLO / 物件偵測格式 ---
+    if "map50" in obj:
+        metrics["map50"] = float(obj["map50"])
+    if "map50_95" in obj:
+        metrics["map50_95"] = float(obj["map50_95"])
+    if "epochs" in obj:
+        metrics["epochs"] = int(obj["epochs"])
+    if "batch_size" in obj:
+        metrics["batch_size"] = int(obj["batch_size"])
+    per_class = obj.get("per_class_map50") or {}
+
+    # --- OCR 格式 ---
+    exact_match = obj.get("test_exact_match") or obj.get("exact_match")
+    cer = obj.get("test_cer") or obj.get("val_cer") or obj.get("cer")
+    if exact_match is not None and "map50" not in metrics:
+        metrics["map50"] = float(exact_match)
+    if cer is not None:
+        metrics["ocr_cer"] = float(cer)
+
+    return {"metrics": metrics, "per_class": per_class or None}
+
+
+def _read_result_json_from_log(dest_dir: str) -> dict:
+    """
+    Fallback：從 log 文件（.log）中搜尋 ##RESULT_JSON##: 標記行解析指標。
+    用於 kaggle kernels output 無法下載 result.json 時（Script kernel 限制）。
+    """
+    MARKER = "##RESULT_JSON##:"
+    log_dir = Path(dest_dir)
+    for log_file in sorted(log_dir.glob("*.log")):
+        try:
+            for line in log_file.read_text(encoding="utf-8", errors="replace").splitlines():
+                # log 格式可能是 JSONL stream，搜尋含 MARKER 的 "data" 欄位
+                if MARKER in line:
+                    # 直接在行中找 MARKER
+                    idx = line.find(MARKER)
+                    payload = line[idx + len(MARKER):]
+                    # 若在 JSONL wrapper 中，payload 可能有尾端的 < 等 escape
+                    # 嘗試直接 json.loads
+                    try:
+                        obj = json.loads(payload)
+                        result = _parse_result_obj(obj)
+                        logger.info(
+                            "_read_result_json_from_log: parsed from %s, map50=%s",
+                            log_file.name, result.get("metrics", {}).get("map50"),
+                        )
+                        return result
+                    except json.JSONDecodeError:
+                        pass
+                # JSONL wrapper：{"stream_name":..., "data":"...##RESULT_JSON##:..."}
+                if '"data"' in line and MARKER in line:
+                    try:
+                        wrapper = json.loads(line.strip().rstrip(","))
+                        data_str = wrapper.get("data", "")
+                        if MARKER in data_str:
+                            idx = data_str.find(MARKER)
+                            payload = data_str[idx + len(MARKER):]
+                            obj = json.loads(payload)
+                            result = _parse_result_obj(obj)
+                            logger.info(
+                                "_read_result_json_from_log(jsonl): parsed from %s, map50=%s",
+                                log_file.name, result.get("metrics", {}).get("map50"),
+                            )
+                            return result
+                    except (json.JSONDecodeError, KeyError):
+                        pass
+        except Exception as e:
+            logger.warning("_read_result_json_from_log failed reading %s: %s", log_file, e)
+    return {}
+
+
 def _read_result_json(dest_dir: str) -> dict:
     """
-    直接讀取 kernel output 目錄下的 result.json。
+    讀取 kernel output 目錄下的 result.json。
 
     支援兩種 metrics 格式：
     1. YOLO / 物件偵測：含 map50 / map50_95 欄位
@@ -161,43 +238,28 @@ def _read_result_json(dest_dir: str) -> dict:
        - exact_match 會對應到 map50（作為主要品質指標）
        - cer 寫入 ocr_cer（供 notes 使用）
 
+    若 result.json 不存在（Kaggle Script kernel 無法自動下載工作目錄檔案），
+    自動 fallback 到從 .log 文件解析 ##RESULT_JSON##: 標記行。
+
     若存在且含支援的指標，回傳解析結果；否則回傳 {}。
     這是最可靠的 metrics 來源（kernel 已標準化輸出）。
 
     Bug fix (2026-04-27): 原本缺少 OCR 指標支援，導致 MH-009 等 OCR 任務
     的 metrics 無法寫入 model_versions.map50。
+    Fix (2026-05-04): 加入 log fallback（##RESULT_JSON##:），解決 Kaggle Script
+    kernel 無法透過 kaggle kernels output 下載 result.json 的問題。
     """
     result_path = Path(dest_dir) / "result.json"
-    if not result_path.exists():
-        return {}
-    try:
-        obj = json.loads(result_path.read_text())
-        metrics: dict = {}
-        # --- YOLO / 物件偵測格式 ---
-        if "map50" in obj:
-            metrics["map50"] = float(obj["map50"])
-        if "map50_95" in obj:
-            metrics["map50_95"] = float(obj["map50_95"])
-        if "epochs" in obj:
-            metrics["epochs"] = int(obj["epochs"])
-        if "batch_size" in obj:
-            metrics["batch_size"] = int(obj["batch_size"])
-        per_class = obj.get("per_class_map50") or {}
+    if result_path.exists():
+        try:
+            obj = json.loads(result_path.read_text())
+            return _parse_result_obj(obj)
+        except Exception as e:
+            logger.warning("_read_result_json failed (%s): %s", result_path, e)
 
-        # --- OCR 格式（fix）---
-        # exact_match → map50（主要品質指標，0~1 scale 相容）
-        # cer → ocr_cer（保存原始 CER 值）
-        exact_match = obj.get("test_exact_match") or obj.get("exact_match")
-        cer = obj.get("test_cer") or obj.get("val_cer") or obj.get("cer")
-        if exact_match is not None and "map50" not in metrics:
-            metrics["map50"] = float(exact_match)
-        if cer is not None:
-            metrics["ocr_cer"] = float(cer)
-
-        return {"metrics": metrics, "per_class": per_class or None}
-    except Exception as e:
-        logger.warning("_read_result_json failed (%s): %s", result_path, e)
-        return {}
+    # Fallback：從 log 解析 ##RESULT_JSON##: 標記
+    logger.info("_read_result_json: result.json not found, trying log fallback (%s)", dest_dir)
+    return _read_result_json_from_log(dest_dir)
 
 
 def _compute_pass_fail(map50: float, threshold: float) -> str:

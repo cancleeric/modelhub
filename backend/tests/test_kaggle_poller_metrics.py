@@ -255,6 +255,110 @@ class TestReadResultJsonOcr:
 
 
 # ---------------------------------------------------------------------------
+# 2b. _read_result_json log fallback（##RESULT_JSON##: 標記）
+# ---------------------------------------------------------------------------
+
+class TestReadResultJsonFromLog:
+
+    def _make_plain_log(self, tmp_dir, result: dict) -> None:
+        """模擬 kernel stdout 直接含 ##RESULT_JSON##: 的 log 文件"""
+        import json as _json
+        (tmp_dir / "kernel.log").write_text(
+            "some line\n"
+            "mAP50=0.8996  mAP50-95=0.6162\n"
+            "##RESULT_JSON##:" + _json.dumps(result) + "\n"
+        )
+
+    def _make_jsonl_log(self, tmp_dir, result: dict) -> None:
+        """模擬 Kaggle JSONL stream log，data 欄位含 ##RESULT_JSON##: 標記"""
+        import json as _json
+        marker_line = {
+            "stream_name": "stdout",
+            "time": 35603.42,
+            "data": "##RESULT_JSON##:" + _json.dumps(result) + "\n",
+        }
+        (tmp_dir / "kernel.log").write_text(
+            '{"stream_name":"stdout","time":1.0,"data":"training start\\n"}\n'
+            + _json.dumps(marker_line) + "\n"
+        )
+
+    def test_log_fallback_plain_format(self):
+        """result.json 不存在，從 plain log 解析 ##RESULT_JSON##:"""
+        import importlib
+        import pollers.kaggle_poller as kp
+        importlib.reload(kp)
+
+        result_data = {"map50": 0.8996, "map50_95": 0.6162, "per_class_map50": {"hardhat": 0.94}}
+
+        with _tmp_dir() as d:
+            self._make_plain_log(d, result_data)
+            result = kp._read_result_json(str(d))
+
+        assert result["metrics"]["map50"] == pytest.approx(0.8996)
+        assert result["metrics"]["map50_95"] == pytest.approx(0.6162)
+        assert result["per_class"] == {"hardhat": 0.94}
+
+    def test_log_fallback_jsonl_format(self):
+        """result.json 不存在，從 JSONL stream log 解析 ##RESULT_JSON##:"""
+        import importlib
+        import pollers.kaggle_poller as kp
+        importlib.reload(kp)
+
+        result_data = {"map50": 0.750, "map50_95": 0.510}
+
+        with _tmp_dir() as d:
+            self._make_jsonl_log(d, result_data)
+            result = kp._read_result_json(str(d))
+
+        assert result["metrics"]["map50"] == pytest.approx(0.750)
+        assert result["metrics"]["map50_95"] == pytest.approx(0.510)
+
+    def test_log_fallback_not_triggered_when_result_json_exists(self):
+        """result.json 存在時，log fallback 不應被觸發（result.json 優先）"""
+        import importlib
+        import pollers.kaggle_poller as kp
+        importlib.reload(kp)
+
+        result_data = {"map50": 0.8996}
+        log_data = {"map50": 0.999}  # log 裡有不同值，應被忽略
+
+        with _tmp_dir() as d:
+            (d / "result.json").write_text('{"map50": 0.8996}')
+            self._make_plain_log(d, log_data)
+            result = kp._read_result_json(str(d))
+
+        # 應使用 result.json 的 0.8996，不用 log 的 0.999
+        assert result["metrics"]["map50"] == pytest.approx(0.8996)
+
+    def test_log_fallback_no_marker_returns_empty(self):
+        """log 存在但無 ##RESULT_JSON##: 標記 → 回傳 {}"""
+        import importlib
+        import pollers.kaggle_poller as kp
+        importlib.reload(kp)
+
+        with _tmp_dir() as d:
+            (d / "kernel.log").write_text("training output without marker\nmAP50=0.75\n")
+            result = kp._read_result_json(str(d))
+
+        assert result == {}
+
+    def test_log_fallback_ocr_format(self):
+        """log fallback 也支援 OCR 格式（test_exact_match）"""
+        import importlib
+        import pollers.kaggle_poller as kp
+        importlib.reload(kp)
+
+        result_data = {"test_exact_match": 0.036, "test_cer": 0.4227}
+
+        with _tmp_dir() as d:
+            self._make_plain_log(d, result_data)
+            result = kp._read_result_json(str(d))
+
+        assert result["metrics"]["map50"] == pytest.approx(0.036)
+        assert result["metrics"]["ocr_cer"] == pytest.approx(0.4227)
+
+
+# ---------------------------------------------------------------------------
 # 3. per_class_metrics fallback（Bug fix regression test）
 # ---------------------------------------------------------------------------
 

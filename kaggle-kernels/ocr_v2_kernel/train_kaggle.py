@@ -338,3 +338,5 @@ with open(result_path, "w") as f:
     json.dump(result, f, ensure_ascii=False, indent=2)
 print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)
 print(f"\n結論：{tier}", flush=True)
+# 標記行：kaggle_poller 從 log 解析指標用（確保 result.json 無法下載時仍可回填）
+print("##RESULT_JSON##:" + json.dumps(result, ensure_ascii=False), flush=True)
