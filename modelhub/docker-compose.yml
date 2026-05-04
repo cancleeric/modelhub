@@ -1,0 +1,93 @@
+version: "3.8"
+services:
+  modelhub-api:
+    build: ./backend
+    container_name: modelhub-api-dev
+    ports:
+      - "127.0.0.1:8950:8000"
+    volumes:
+      - ./backend:/app
+      - /Users/yinghaowang/HurricaneCore/docker-data/modelhub/db:/app/data
+      - /Users/yinghaowang/HurricaneCore/docker-data/modelhub/models:/app/data/models
+      # Sprint 6.1: Kaggle credential（host 若沒有該檔會 bind 空目錄，poller 會自動 skip）
+      - /Users/yinghaowang/HurricaneCore/docker-data/modelhub/kaggle:/home/appuser/.kaggle:ro
+      # Persistent logs（訓練 poller 產生的 run log）
+      - /Users/yinghaowang/HurricaneCore/docker-data/modelhub/logs:/app/logs
+      # Kaggle kernel output 下載目錄（bind mount 避免重啟後遺失）
+      - /Users/yinghaowang/HurricaneCore/docker-data/modelhub/datasets:/app/datasets
+    environment:
+      # 必填：從 DB api_keys 表取得或由管理員手動設定。
+      # 取得方式：hvault get hurricanecore/dev/MODELHUB_API_KEY
+      # 未設定時訓練腳本的 modelhub_report 回寫將靜默跳過。
+      - MODELHUB_API_KEY=${MODELHUB_API_KEY}
+      - MODELHUB_KAGGLE_POLL_INTERVAL=60
+      - MODELHUB_GPU_USD_PER_HOUR=0.5
+      # ANEMONE_API_TOKEN: 從 Hurricane Vault 取得 (hurricanecore/dev/ANEMONE_API_TOKEN)
+      # 設定方式：hvault run --prefix "hurricanecore/dev/" -- docker-compose up
+      # 或在 docker-compose.override.yml 中覆寫此值
+      - ANEMONE_API_TOKEN=${ANEMONE_API_TOKEN:-}
+      # DATABASE_URL: 從 Hurricane Vault 取得 (hurricanecore/dev/MODELHUB_DATABASE_URL)
+      # 未設時使用 SQLite（預設值）；PostgreSQL 格式：postgresql://user:pass@host:5432/dbname
+      - DATABASE_URL=${DATABASE_URL:-sqlite:////app/data/modelhub.db}
+      # Sprint 17 P0-2: 本機訓練已停用，強制走線上 GPU（Kaggle/Lightning）
+      - DISABLE_LOCAL_TRAINING=true
+      # Lightning AI 憑證（Sprint 15 P2-1）
+      # 取得方式：hvault get hurricanecore/dev/LIGHTNING_USER_ID / LIGHTNING_API_KEY
+      # 啟動方式：hvault run --prefix "hurricanecore/dev/" -- docker-compose up
+      - LIGHTNING_USER_ID=${LIGHTNING_USER_ID:-}
+      - LIGHTNING_API_KEY=${LIGHTNING_API_KEY:-}
+      - LIGHTNING_USERNAME=${LIGHTNING_USERNAME:-cancleeric}
+      - LIGHTNING_TEAMSPACE=${LIGHTNING_TEAMSPACE:-default-teamspace}
+      # Kaggle kernel output 下載目錄（對應 bind mount datasets/）
+      - MODELHUB_KAGGLE_DL_DIR=/app/datasets
+      # 模型訓練輸出 base（對應 bind mount models/）
+      - MODELHUB_TRAINING_BASE=/app/data/models
+      # 推論 server URL（inference server 跑在 host，容器內透過 host.docker.internal 連線）
+      - MODELHUB_INFER_URL=http://host.docker.internal:8951
+    restart: unless-stopped
+    networks:
+      - squid_dev_network
+
+  modelhub-web:
+    image: node:20-alpine
+    container_name: modelhub-web-dev
+    user: "1000:1000"
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 3950"
+    ports:
+      - "127.0.0.1:3950:3950"
+    restart: unless-stopped
+    networks:
+      - squid_dev_network
+
+  modelhub-inference:
+    build: ./inference-server
+    container_name: modelhub-inference-dev
+    ports:
+      - "127.0.0.1:8951:8951"
+    volumes:
+      - ./inference-server:/app
+      # bind mount 唯讀：models 共用 single source，inference 不寫 model file
+      - /Users/yinghaowang/HurricaneCore/docker-data/modelhub/models:/models:ro
+    environment:
+      # modelhub-api 同 network 內走容器名
+      - MODELHUB_API_URL=http://modelhub-api-dev:8000
+      # 取得方式：hvault get hurricanecore/dev/MODELHUB_API_KEY
+      - MODELHUB_API_KEY=${MODELHUB_API_KEY}
+      # LRU 上限（預設 3）
+      - MAX_LOADED_MODELS=${MAX_LOADED_MODELS:-3}
+      # Registry refresh 間隔（秒，預設 300）
+      - REGISTRY_REFRESH_SECONDS=${REGISTRY_REFRESH_SECONDS:-300}
+      # bind mount 路徑（對應上方 volumes）
+      - MODELS_MOUNT=/models
+    restart: unless-stopped
+    networks:
+      - squid_dev_network
+    depends_on:
+      - modelhub-api
+
+networks:
+  squid_dev_network:
+    external: true

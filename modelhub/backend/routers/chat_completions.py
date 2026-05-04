@@ -24,6 +24,7 @@ chat_completions.py — OpenAI-compatible /v1/chat/completions endpoint
 import base64
 import io
 import logging
+import os
 import time
 import uuid
 from typing import Any, Optional
@@ -37,7 +38,8 @@ from auth import get_api_key
 logger = logging.getLogger("modelhub.chat_completions")
 
 # host inference server（跑在 host Python，不在容器內）
-INFERENCE_SERVER_URL = "http://localhost:8951"
+# 容器內需設 MODELHUB_INFER_URL=http://host.docker.internal:8951 才能連到 host
+INFERENCE_SERVER_URL = os.getenv("MODELHUB_INFER_URL", "http://localhost:8951")
 INFERENCE_TIMEOUT = 30.0
 
 router = APIRouter()
@@ -93,9 +95,15 @@ def _extract_image(messages: list[Message]) -> bytes:
     """
     image_bytes: Optional[bytes] = None
 
+    import re as _re
+
     for msg in messages:
         content = msg.content
         if isinstance(content, str):
+            # 支援純文字中嵌入的 data URI（例如 brain-cloud 轉發的 new_message content）
+            match = _re.search(r'(data:image/[^;]+;base64,[A-Za-z0-9+/=]+)', content)
+            if match:
+                image_bytes = _fetch_image_bytes(match.group(1))
             continue
         if isinstance(content, list):
             for part in content:
