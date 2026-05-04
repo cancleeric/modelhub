@@ -174,7 +174,9 @@ def _parse_result_obj(obj: dict) -> dict:
     if exact_match is not None and "map50" not in metrics:
         metrics["map50"] = float(exact_match)
     if cer is not None:
-        metrics["ocr_cer"] = float(cer)
+        # Sprint 32 CER normalization fix (MH-2026-029)：防禦性 clamp，
+        # 若 Kaggle kernel 回傳未正規化的 CER（如 86.25），強制壓回 [0, 1]
+        metrics["ocr_cer"] = min(float(cer), 1.0)
 
     return {"metrics": metrics, "per_class": per_class or None}
 

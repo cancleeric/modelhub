@@ -603,3 +603,79 @@ class TestOcrNotesContainCer:
 
         assert "CER=0.4227" in created_mv.get("notes", "")
         assert created_mv["map50"] == pytest.approx(0.036)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 32: CER normalization fix (MH-2026-029)
+# ---------------------------------------------------------------------------
+
+class TestCerNormalization:
+    """
+    確保 _parse_result_obj 對未正規化 CER（如 86.25）進行 clamp 防禦。
+    Bug: Kaggle kernel 若 pred_str 遠長於 label_str，原始算法可能回傳 >> 1.0。
+    Fix: min(cer_value, 1.0) 三層保險（kernel / compute_cer / poller）。
+    """
+
+    def test_unnormalized_cer_clamped_to_1(self):
+        """ocr_cer=86.25 → parse 後必須 <= 1.0（Sprint 32 防禦測試）"""
+        import importlib
+        import pollers.kaggle_poller as kp
+        importlib.reload(kp)
+
+        with _tmp_dir() as d:
+            dest = _write_result_json(d, {
+                "exact_match": 0.03,
+                "cer": 86.25,  # 未正規化的 CER（MH-2026-029 實際案例）
+            })
+            result = kp._read_result_json(dest)
+
+        assert result["metrics"]["ocr_cer"] <= 1.0, (
+            f"ocr_cer={result['metrics']['ocr_cer']} 應被 clamp 到 <= 1.0"
+        )
+        assert result["metrics"]["ocr_cer"] == pytest.approx(1.0)
+
+    def test_normalized_cer_unchanged(self):
+        """正常 CER（0.0-1.0 範圍）不被影響"""
+        import importlib
+        import pollers.kaggle_poller as kp
+        importlib.reload(kp)
+
+        with _tmp_dir() as d:
+            dest = _write_result_json(d, {
+                "exact_match": 0.15,
+                "cer": 0.42,
+            })
+            result = kp._read_result_json(dest)
+
+        assert result["metrics"]["ocr_cer"] == pytest.approx(0.42)
+
+    def test_cer_just_above_1_clamped(self):
+        """CER 略超過 1.0（如 1.05）也應被 clamp"""
+        import importlib
+        import pollers.kaggle_poller as kp
+        importlib.reload(kp)
+
+        with _tmp_dir() as d:
+            dest = _write_result_json(d, {
+                "cer": 1.05,
+            })
+            result = kp._read_result_json(dest)
+
+        assert result["metrics"]["ocr_cer"] <= 1.0
+        assert result["metrics"]["ocr_cer"] == pytest.approx(1.0)
+
+    def test_test_cer_field_also_clamped(self):
+        """test_cer 欄位（MH-009 格式）同樣被 clamp"""
+        import importlib
+        import pollers.kaggle_poller as kp
+        importlib.reload(kp)
+
+        with _tmp_dir() as d:
+            dest = _write_result_json(d, {
+                "test_exact_match": 0.036,
+                "test_cer": 86.25,
+            })
+            result = kp._read_result_json(dest)
+
+        assert result["metrics"]["ocr_cer"] <= 1.0
+        assert result["metrics"]["ocr_cer"] == pytest.approx(1.0)

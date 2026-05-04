@@ -191,7 +191,9 @@ def compute_cer(pred_str, label_str):
         return 0.0 if len(pred_str) == 0 else 1.0
     sm = SequenceMatcher(None, pred_str, label_str)
     edit_ops = len(pred_str) + len(label_str) - 2 * sum(b.size for b in sm.get_matching_blocks())
-    return edit_ops / len(label_str)
+    # Sprint 32 CER normalization fix (MH-2026-029)：clamp 到 [0, 1]，防止 pred_str 遠長於 label_str 時超過 1.0
+    cer_value = edit_ops / len(label_str)
+    return min(cer_value, 1.0)
 
 
 def compute_metrics(eval_pred):

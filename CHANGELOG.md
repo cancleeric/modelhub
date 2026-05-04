@@ -1,5 +1,14 @@
 # Changelog — ModelHub
 
+## [0.7.0] — 2026-05-04 (Sprint 32)
+
+### Bug Fixes
+- **MH-2026-029 CER normalization fix（P0）**：`kaggle_poller._parse_result_obj()` 新增防禦性 clamp，確保 `ocr_cer` 回傳值 <= 1.0；修復 Kaggle kernel 未正規化 CER（如 86.25）導致指標異常的問題
+- **kaggle-kernels/ocr_v2_kernel/train_kaggle.py** `compute_cer()` 尾端加 `min(cer_value, 1.0)` clamp，從 kernel 端防止產生超界 CER
+
+### Tests
+- 新增 `TestCerNormalization`（4 tests）：覆蓋 86.25 未正規化 CER、正常範圍不影響、略超 1.0 情境、`test_cer` 欄位同樣被 clamp
+
 ## [0.6.3] — 2026-05-04 (Sprint 29-31)
 
 ### New Features
