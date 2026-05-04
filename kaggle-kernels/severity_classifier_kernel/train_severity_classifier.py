@@ -9,7 +9,8 @@ Architecture:
     Target:   accuracy >= 0.85
 
 Dataset:
-    /kaggle/input/aegis-severity-corpus/severity_corpus.csv
+    /kaggle/input/datasets/boardgamegroup/aegis-severity-corpus/severity_corpus.csv
+    (Kaggle 新版掛載路徑：/kaggle/input/datasets/{user}/{slug}/)
     503 rows: 50 human_label + 453 rule_severity (mixed labels)
     Columns: id, asset, module, title, evidence, rule_severity, human_label
 
@@ -47,7 +48,8 @@ from xgboost import XGBClassifier
 # ──────────────────────────────────────────────
 # Config
 # ──────────────────────────────────────────────
-DATASET_PATH = Path("/kaggle/input/aegis-severity-corpus/severity_corpus.csv")
+# Kaggle 新版（server 2.x）掛載路徑改為 /kaggle/input/datasets/{user}/{slug}/
+DATASET_PATH = Path("/kaggle/input/datasets/boardgamegroup/aegis-severity-corpus/severity_corpus.csv")
 OUTPUT_DIR = Path("/kaggle/working")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -55,17 +57,6 @@ SEVERITY_ORDER = {"INFO": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
 TARGET_ACCURACY = 0.85
 N_FOLDS = 5
 SEED = 42
-
-# ──────────────────────────────────────────────
-# Debug: list available input
-# ──────────────────────────────────────────────
-import os as _os
-print("=== /kaggle/input/ contents ===")
-for _d in sorted(_os.listdir("/kaggle/input")):
-    _dp = f"/kaggle/input/{_d}"
-    _files = _os.listdir(_dp) if _os.path.isdir(_dp) else []
-    print(f"  {_d}/: {_files[:5]}")
-print("=== end ===")
 
 # ──────────────────────────────────────────────
 # Load data
