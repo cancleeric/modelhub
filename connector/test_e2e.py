@@ -87,14 +87,10 @@ TARGET_TENANT = "aicad"
 TARGET_AGENT = "cad"
 TARGET_MODEL = "modelhub/mh-2026-010"
 
-# 最小合法 JPEG（1x1 px 白色，base64）
-_MINIMAL_JPEG_B64 = (
-    "/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8U"
-    "HRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgN"
-    "DRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIy"
-    "MjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFgABAQEAAAAAAAAAAAAAAAAAAAAHCP/EABQQ"
-    "AQAAAAAAAAAAAAAAAAAAAAD/xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAA"
-    "AAAAAAAP/aAAwDAQACEQMRAD8AoQAB/9k="
+# 最小合法 PNG（1x1 px 紅色，base64）— 足夠觸發 ModelHub 圖像分類
+_MINIMAL_PNG_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ"
+    "/pLvAAAAAElFTkSuQmCC"
 )
 
 # ── 共享狀態 ──────────────────────────────────────────────────────────────────
@@ -226,7 +222,7 @@ async def _mock_brain_ws_handler(ws):
         "conversation_id": conv_id,
         "visitor_id": visitor_id,
         "message_id": message_id,
-        "content": f"請辨識這張 CAD 圖片中的 PID 符號，圖片（base64）：data:image/jpeg;base64,{_MINIMAL_JPEG_B64}",
+        "content": f"請辨識這張 CAD 圖片中的 PID 符號，圖片（base64）：data:image/png;base64,{_MINIMAL_PNG_B64}",
         "timestamp": time.time(),
     }
     logger.info("送出 new_message [conv=%s]", conv_id)

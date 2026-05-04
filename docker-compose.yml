@@ -42,6 +42,8 @@ services:
       - MODELHUB_KAGGLE_DL_DIR=/app/datasets
       # 模型訓練輸出 base（對應 bind mount models/）
       - MODELHUB_TRAINING_BASE=/app/data/models
+      # 推論 server URL（inference server 跑在 host，容器內透過 host.docker.internal 連線）
+      - MODELHUB_INFER_URL=http://host.docker.internal:8951
     restart: unless-stopped
     networks:
       - squid_dev_network
@@ -59,6 +61,21 @@ services:
     restart: unless-stopped
     networks:
       - squid_dev_network
+
+  modelhub-connector-dev:
+    build:
+      context: ./connector
+    container_name: modelhub-connector-dev
+    restart: unless-stopped
+    networks:
+      - squid_dev_network
+    environment:
+      - BRAIN_CLOUD_WS_URL=ws://brain-cloud-dev:8932/ws/llm-provider
+      - BRAIN_PROVIDER_API_KEY=${BRAIN_PROVIDER_API_KEY}
+      - MODELHUB_API_URL=http://modelhub-api-dev:8000
+      - MODELHUB_API_KEY=${MODELHUB_API_KEY}
+    depends_on:
+      - modelhub-api
 
   modelhub-inference:
     build: ./inference-server
