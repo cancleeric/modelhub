@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { submissionsApi, registryApi, type Submission, type SubmissionHistoryItem } from '../api/client'
@@ -211,6 +211,44 @@ export default function SubmissionDetailPage() {
       qc.invalidateQueries({ queryKey: ['submission', req_no] })
     },
   })
+
+  // Sprint 33: Kaggle Tab Auto-refresh — kaggle_status=running 時每 30 秒 polling 輕量 endpoint
+  const kagglePollerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  useEffect(() => {
+    const isRunning = sub?.kaggle_status === 'running'
+    const isKaggleTab = tab === 'kaggle'
+    // 只有在 kaggle tab 且狀態為 running 時才啟動 polling
+    if (isRunning && isKaggleTab && req_no) {
+      kagglePollerRef.current = setInterval(async () => {
+        try {
+          const fresh = await submissionsApi.kaggleStatus(req_no)
+          // 若狀態已變成非 running，invalidate 主查詢讓頁面重新整理
+          if (fresh.kaggle_status !== 'running') {
+            qc.invalidateQueries({ queryKey: ['submission', req_no] })
+          } else {
+            // 狀態還是 running，只更新 submission cache 中的 kaggle_status_updated_at
+            qc.setQueryData(['submission', req_no], (old: typeof sub) =>
+              old
+                ? {
+                    ...old,
+                    kaggle_status: fresh.kaggle_status,
+                    kaggle_status_updated_at: fresh.kaggle_status_updated_at,
+                  }
+                : old
+            )
+          }
+        } catch {
+          // polling 失敗靜默略過
+        }
+      }, 30000)
+    }
+    return () => {
+      if (kagglePollerRef.current) {
+        clearInterval(kagglePollerRef.current)
+        kagglePollerRef.current = null
+      }
+    }
+  }, [sub?.kaggle_status, tab, req_no, qc])
 
   // Sprint 19 C.3: 取 history 中最近一筆 training_failed_summary
   const trainingFailedSummary: SubmissionHistoryItem | null =

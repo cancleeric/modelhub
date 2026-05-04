@@ -593,6 +593,27 @@ async def delete_submission(
     db.commit()
 
 
+# Sprint 33: 輕量 Kaggle 狀態端點（供前端 polling 用，無需 auth）
+@router.get("/{req_no}/kaggle-status")
+async def get_kaggle_status_lite(
+    req_no: str,
+    db: Session = Depends(get_db),
+):
+    """
+    輕量 Kaggle 狀態查詢，只查 DB，不打 Kaggle API。
+    不需 auth（供前端 30 秒輪詢使用）。
+    """
+    obj = db.query(Submission).filter(Submission.req_no == req_no).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    return {
+        "req_no": req_no,
+        "kaggle_status": obj.kaggle_status,
+        "kaggle_status_updated_at": obj.kaggle_status_updated_at,
+        "kaggle_kernel_slug": obj.kaggle_kernel_slug,
+    }
+
+
 # P1-3: ModelVersion 查詢端點（含追溯性欄位）
 @router.get("/{req_no}/model-versions", response_model=List[ModelVersionOut])
 async def list_model_versions(

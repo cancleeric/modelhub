@@ -22,11 +22,14 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
+import urllib.request
+import urllib.error
+
 from sqlalchemy.orm import Session
 
 from models import SessionLocal, Submission, ModelVersion
 from parsers import parse_training_log
-from notifications import notify_event
+from notifications import notify_event, notify, CTO_TARGET
 from utils import next_version_for as _next_version_for, read_log_files as _read_log_files
 
 logger = logging.getLogger("modelhub.poller.kaggle")
@@ -411,6 +414,88 @@ async def _on_kernel_complete(db: Session, sub: Submission) -> None:
         logger.warning("_on_kernel_complete: queue mark_done failed: %s", _qe)
 
     await notify_event("training_complete", sub)
+
+    # Sprint 33: pass_fail=pass 時自動驗收
+    if pass_fail == "pass":
+        await _auto_accept(
+            req_no=sub.req_no,
+            map50_actual=map50_val,
+            map50_95_actual=metrics.get("map50_95"),
+            notes=mv_notes,
+        )
+        # 自動驗收後通知 CTO
+        await _notify_auto_accept(sub.req_no, map50_val)
+
+
+async def _auto_accept(
+    req_no: str,
+    map50_actual: Optional[float],
+    map50_95_actual: Optional[float],
+    notes: Optional[str],
+) -> None:
+    """
+    Sprint 33 P0: Kaggle 訓練 pass 後自動打 accept_version API。
+    使用 urllib（標準庫）避免引入額外依賴。
+    失敗時只 log warning，不拋出 exception。
+    """
+    base_url = os.environ.get("MODELHUB_BASE_URL", "http://localhost:8000")
+    api_key = os.environ.get("MODELHUB_API_KEY", "")
+
+    # 先查詢 ModelVersion ID（最新一筆 pending_acceptance）
+    try:
+        list_url = f"{base_url}/api/registry/?req_no={req_no}&status=pending_acceptance"
+        req = urllib.request.Request(list_url, headers={"X-Api-Key": api_key})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            versions = json.loads(resp.read())
+        if not versions:
+            logger.warning("_auto_accept: no pending_acceptance version found for %s", req_no)
+            return
+        # 取最新一筆（回傳已按 created_at desc 排序）
+        mv_id = versions[0]["id"]
+    except Exception as e:
+        logger.warning("_auto_accept: failed to list versions for %s: %s", req_no, e)
+        return
+
+    # 打 accept API
+    accept_url = f"{base_url}/api/registry/{mv_id}/accept"
+    body = json.dumps({
+        "accepted_by": "kaggle_poller",
+        "acceptance_note": f"自動驗收 pass_fail=pass; {notes or ''}".strip("; "),
+        "map50_actual": map50_actual,
+        "map50_95_actual": map50_95_actual,
+        "pass_fail": "pass",
+    }).encode()
+    try:
+        req = urllib.request.Request(
+            accept_url,
+            data=body,
+            method="POST",
+            headers={"X-Api-Key": api_key, "Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
+        logger.info(
+            "_auto_accept: req=%s mv_id=%d accepted (map50_actual=%s, status=%s)",
+            req_no, mv_id, map50_actual, result.get("status"),
+        )
+    except Exception as e:
+        logger.warning("_auto_accept: accept POST failed for %s mv_id=%s: %s", req_no, mv_id, e)
+
+
+async def _notify_auto_accept(req_no: str, map50_actual: Optional[float]) -> None:
+    """
+    Sprint 33 P0: 自動驗收後透過 notify（CMC）發送通知給 CTO。
+    靜默失敗，不影響主流程。
+    """
+    try:
+        msg = (
+            f"[MH] {req_no} 訓練完成並自動驗收\n"
+            f"mAP50={map50_actual}, pass_fail=pass"
+        )
+        await notify(CTO_TARGET, msg)
+        logger.info("_notify_auto_accept: notification sent for %s", req_no)
+    except Exception as e:
+        logger.warning("_notify_auto_accept: failed for %s: %s", req_no, e)
 
 
 def _append_training_failed_summary(db: Session, sub: Submission) -> None:

@@ -1,5 +1,14 @@
 # Changelog — ModelHub
 
+## [0.7.1] — 2026-05-04 (Sprint 33)
+
+### New Features
+- **Kaggle 自動驗收（P0）**：`kaggle_poller._auto_accept()` — kernel complete 且 `pass_fail=pass` 時，自動打 `POST /api/registry/{mv_id}/accept`，並透過 CMC 通知 CTO
+- **輕量 Kaggle 狀態 Endpoint**：`GET /api/submissions/{req_no}/kaggle-status`（`submissions.py`）— 無需 auth，只查 DB，回傳 `req_no/kaggle_status/kaggle_status_updated_at/kaggle_kernel_slug`
+- **前端 Kaggle Tab Auto-refresh**：`SubmissionDetailPage.tsx` — `kaggle_status=running` 且在 kaggle tab 時，每 30 秒打輕量 endpoint 更新顯示；`complete` 或 `error` 時停止 polling 並 invalidate 主查詢
+
+---
+
 ## [0.7.0] — 2026-05-04 (Sprint 32)
 
 ### Bug Fixes
