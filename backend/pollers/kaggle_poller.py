@@ -444,6 +444,11 @@ def _append_training_failed_summary(db: Session, sub: Submission) -> None:
 
 
 async def _on_kernel_error(db: Session, sub: Submission, raw: str) -> None:
+    # 幂等保護：已達終態（failed/trained/accepted）直接跳過
+    if sub.status in ("failed", "trained", "accepted", "rejected"):
+        logger.debug("_on_kernel_error: req=%s already terminal status=%s, skip", sub.req_no, sub.status)
+        return
+
     now = datetime.utcnow()
     sub.kaggle_status = "error"
     sub.kaggle_status_updated_at = now

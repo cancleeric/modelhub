@@ -106,7 +106,7 @@ class AcceptancePayload(BaseModel):
 async def list_versions_by_req(
     req_no: str,
     db: Session = Depends(get_db),
-    current_user: dict = CurrentUser,
+    current_user: dict = CurrentUserOrApiKey,
 ):
     """單一需求單的所有版本"""
     return (
@@ -123,7 +123,7 @@ async def list_versions(
     product: Optional[str] = None,
     status: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: dict = CurrentUser,
+    current_user: dict = CurrentUserOrApiKey,
 ):
     q = db.query(ModelVersion)
     if req_no:
@@ -169,7 +169,7 @@ async def get_latest_model(
 async def get_version(
     id: int,
     db: Session = Depends(get_db),
-    current_user: dict = CurrentUser,
+    current_user: dict = CurrentUserOrApiKey,
 ):
     obj = db.query(ModelVersion).filter(ModelVersion.id == id).first()
     if not obj:

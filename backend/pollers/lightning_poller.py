@@ -498,6 +498,19 @@ def start_scheduler():
     if _scheduler:
         return _scheduler
 
+    # 啟動時一次性說明 API Key 狀態，避免每次 poll 都 warning
+    if _lightning_env_ready():
+        logger.info(
+            "Lightning poller: LIGHTNING_API_KEY detected, will poll Lightning AI jobs every %ds",
+            POLL_INTERVAL_SECONDS,
+        )
+    else:
+        logger.warning(
+            "Lightning poller: LIGHTNING_API_KEY not set — scheduler will start but all polls "
+            "will be skipped. Set LIGHTNING_API_KEY env var to enable Lightning AI integration. "
+            "See: https://lightning.ai → Settings → API Keys"
+        )
+
     _scheduler = AsyncIOScheduler(timezone="Asia/Taipei")
     _scheduler.add_job(
         poll_once, "interval",

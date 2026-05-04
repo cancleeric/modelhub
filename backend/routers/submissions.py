@@ -244,7 +244,7 @@ class ModelVersionOut(BaseModel):
 @router.get("/stats/summary")
 async def get_stats_summary(
     db: Session = Depends(get_db),
-    current_user: dict = CurrentUser,
+    current_user: dict = CurrentUserOrApiKey,
 ):
     """各狀態件數統計"""
     rows = (
@@ -265,7 +265,7 @@ async def list_submissions(
     limit: int = 50,
     offset: int = 0,
     db: Session = Depends(get_db),
-    current_user: dict = CurrentUser,
+    current_user: dict = CurrentUserOrApiKey,
 ):
     # P2-15: 加分頁（limit/offset），預設 limit=50
     # P2-13: 過濾系統用 magic string req_no（__quota__、__quota_lightning__、__health__ 等）
@@ -286,7 +286,7 @@ async def list_submissions(
 async def get_submission(
     req_no: str,
     db: Session = Depends(get_db),
-    current_user: dict = CurrentUser,
+    current_user: dict = CurrentUserOrApiKey,
 ):
     obj = db.query(Submission).filter(Submission.req_no == req_no).first()
     if not obj:
@@ -598,7 +598,7 @@ async def delete_submission(
 async def list_model_versions(
     req_no: str,
     db: Session = Depends(get_db),
-    current_user: dict = CurrentUser,
+    current_user: dict = CurrentUserOrApiKey,
 ):
     """列出指定需求單的所有 ModelVersion（含 dataset_snapshot_id / train_commit_hash / hyperparams_json）"""
     obj = db.query(Submission).filter(Submission.req_no == req_no).first()
