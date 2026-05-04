@@ -1,5 +1,25 @@
 # Changelog — ModelHub
 
+## [0.6.3] — 2026-05-04 (Sprint 29-31)
+
+### New Features
+- **Sprint 29**：`registry.accept_version` endpoint 開放 API Key 認證（`CurrentUserOrApiKey`），CTO 機器驗收無需 LIDS Bearer token
+- **Sprint 29**：`registry.create_version` / `registry.update_version` 同步改為 `CurrentUserOrApiKey`
+- **Sprint 29**：`accept_version` 驗收後自動同步 `ModelVersion.status`（pass → `active`，fail → `rejected`）
+- **Sprint 30**：`AcceptancePayload` 新增 `pass_fail` 選填欄位，CTO 人工判定優先於自動 map50_target 比較；`map50_actual` 改為選填
+
+### Model Acceptance (2026-05-04)
+- MH-2026-022 Aegis Severity Auto-classifier v1: accepted (accuracy=0.9662, f1=0.9673)
+- MH-2026-027 PPE Detection v3 yolov8l v1: accepted (mAP50=0.8996)
+- MH-2026-019 Site Object Detection v1: accepted (mAP50=0.7455); v2 (0.4322) rejected
+- MH-2026-006 Text Detection v2: accepted CTO manual pass (mAP50=0.5993); v3 (0.4489) rejected
+- MH-2026-008 Multiview Boundary v1: rejected (mAP50=0.6839 < 0.70 threshold)
+
+### Tests
+- 222 tests passed
+
+---
+
 ## [0.6.2] — 2026-05-04 (Sprint 26-28)
 
 ### Bug Fixes
