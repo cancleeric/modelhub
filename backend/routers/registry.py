@@ -92,10 +92,11 @@ class ModelVersionOut(BaseModel):
 
 
 class AcceptancePayload(BaseModel):
-    map50_actual: float
+    map50_actual: Optional[float] = None
     map50_95_actual: Optional[float] = None
     acceptance_note: Optional[str] = None
     accepted_by: Optional[str] = None
+    pass_fail: Optional[str] = None  # "pass" / "fail"，CTO 人工覆蓋；None 則自動依 target 判定
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +182,7 @@ async def get_version(
 async def create_version(
     payload: ModelVersionCreate,
     db: Session = Depends(get_db),
-    current_user: dict = CurrentUser,
+    current_user: dict = CurrentUserOrApiKey,
 ):
     obj = ModelVersion(**payload.model_dump())
     db.add(obj)
@@ -195,7 +196,7 @@ async def update_version(
     id: int,
     payload: ModelVersionUpdate,
     db: Session = Depends(get_db),
-    current_user: dict = CurrentUser,
+    current_user: dict = CurrentUserOrApiKey,
 ):
     obj = db.query(ModelVersion).filter(ModelVersion.id == id).first()
     if not obj:
@@ -212,7 +213,7 @@ async def accept_version(
     id: int,
     payload: AcceptancePayload,
     db: Session = Depends(get_db),
-    current_user: dict = CurrentUser,
+    current_user: dict = CurrentUserOrApiKey,
 ):
     """
     驗收模型版本：記錄 map50_actual、pass_fail，並與對應需求單的 map50_target 比對。
@@ -227,23 +228,31 @@ async def accept_version(
     obj.accepted_by = payload.accepted_by
     obj.accepted_at = datetime.utcnow()
 
-    # 自動判定 pass/fail（依據需求單 map50_target）
+    # pass/fail 判定邏輯（優先序）：
+    # 1. payload.pass_fail 有值 → CTO 人工判定，直接採用
+    # 2. payload.pass_fail 為 None → 自動依 map50_target 判定；無 target → 預設 pass
     submission = db.query(Submission).filter(Submission.req_no == obj.req_no).first()
-    target = submission.map50_target if submission else None
-    if target is not None:
-        obj.pass_fail = "pass" if payload.map50_actual >= target else "fail"
+    if payload.pass_fail is not None:
+        obj.pass_fail = payload.pass_fail  # CTO 人工覆蓋
     else:
-        obj.pass_fail = "pass"  # 無設定目標，預設通過
+        target = submission.map50_target if submission else None
+        if target is not None and payload.map50_actual is not None:
+            obj.pass_fail = "pass" if payload.map50_actual >= target else "fail"
+        else:
+            obj.pass_fail = "pass"  # 無設定目標或無 map50_actual，預設通過
 
     # is_current 邏輯：pass 才設為 current，同 req_no 其他版本清除
+    # 同步 ModelVersion.status：pass → active，fail → rejected
     if obj.pass_fail == "pass":
         db.query(ModelVersion).filter(
             ModelVersion.req_no == obj.req_no,
             ModelVersion.id != obj.id,
         ).update({"is_current": False})
         obj.is_current = True
+        obj.status = "active"
     else:
         obj.is_current = False
+        obj.status = "rejected"
 
     # 同步 Submission.status → accepted（只從 trained 狀態升級）
     sub = db.query(Submission).filter(Submission.req_no == obj.req_no).first()
