@@ -131,12 +131,23 @@ def eval_and_write_result(
     map50_baseline: float = 0.60,
     extra_fields: Optional[Dict] = None,
     per_class: bool = True,
+    dataset_snapshot_id: Optional[str] = None,
+    train_commit_hash: Optional[str] = None,
+    hyperparams: Optional[Dict] = None,
 ) -> Dict:
     """
     對 model 執行 val()，計算 mAP50/mAP50-95 及 per-class AP50，
     判斷 verdict，寫 result.json，並回傳 result dict。
 
     P2-17: device 必須由 caller 明確傳入，不接受 None（本機 caller 請傳 "mps"）
+
+    追溯性欄位（供 ssh_poller 填入 ModelVersion）：
+    - dataset_snapshot_id: dataset 版本識別（如 Kaggle dataset id / SHA256 hash）
+    - train_commit_hash:   訓練腳本所在 Git commit SHA（40 chars）
+                          可由訓練腳本自動取得：
+                          subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode().strip()
+    - hyperparams:         完整 hyperparams dict（epochs/batch/imgsz/arch 等）
+                          若不傳則由此函式自動組合基本欄位
     """
     if device is None:
         raise ValueError("device 必須明確傳入（例：'mps' 或 '0'），不可為 None")
@@ -164,6 +175,13 @@ def eval_and_write_result(
     else:
         verdict, tier = "fail", "未達 baseline"
 
+    # 自動組合基本 hyperparams（若 caller 未傳）
+    _hyperparams = hyperparams or {
+        "epochs": epochs,
+        "imgsz": imgsz,
+        "device": device,
+    }
+
     result = {
         "req_no": req_no,
         "device": device,
@@ -181,6 +199,10 @@ def eval_and_write_result(
         "target": f"mAP50 >= {map50_target}",
         "baseline": f"mAP50 >= {map50_baseline}",
         "best_path": str(best_pt),
+        # 追溯性欄位（ssh_poller 讀取並填入 ModelVersion）
+        "dataset_snapshot_id": dataset_snapshot_id,
+        "train_commit_hash": train_commit_hash,
+        "hyperparams": _hyperparams,
     }
     if extra_fields:
         result.update(extra_fields)

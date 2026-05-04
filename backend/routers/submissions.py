@@ -22,6 +22,8 @@ _PRIORITY_WHITELIST = {"P0", "P1", "P2", "P3"}
 
 
 class SubmissionCreate(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
     req_name: Optional[str] = Field(default=None, max_length=200)
     product: str = Field(..., min_length=1, max_length=100)
     company: str = Field(..., min_length=1, max_length=100)
@@ -62,6 +64,8 @@ class SubmissionCreate(BaseModel):
 
 class TrainingResultUpdate(BaseModel):
     """Sprint 8.2 — 訓練腳本回寫用 schema"""
+    model_config = {"protected_namespaces": ()}
+
     status: str                                    # "trained" | "training_failed"
     metrics: Optional[dict] = None                # {"map50": 0.62, "epochs": 20, ...}
     model_path: Optional[str] = None
@@ -70,6 +74,8 @@ class TrainingResultUpdate(BaseModel):
 
 
 class SubmissionUpdate(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
     req_name: Optional[str] = Field(default=None, max_length=200)
     product: Optional[str] = Field(default=None, min_length=1, max_length=100)
     company: Optional[str] = Field(default=None, min_length=1, max_length=100)
@@ -182,7 +188,7 @@ class SubmissionOut(BaseModel):
     # P3-25
     updated_at: Optional[datetime] = None
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "protected_namespaces": ()}
 
 
 class SubmissionCreateResult(BaseModel):
@@ -228,7 +234,7 @@ class ModelVersionOut(BaseModel):
     hyperparams_json: Optional[Dict[str, Any]] = None
     created_at: datetime
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "protected_namespaces": ()}
 
 
 # ---------------------------------------------------------------------------

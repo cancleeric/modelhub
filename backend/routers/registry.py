@@ -88,7 +88,7 @@ class ModelVersionOut(BaseModel):
     is_current: Optional[bool]
     created_at: datetime
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "protected_namespaces": ()}
 
 
 class AcceptancePayload(BaseModel):

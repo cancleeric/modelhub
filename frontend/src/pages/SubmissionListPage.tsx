@@ -69,7 +69,7 @@ export default function SubmissionListPage() {
   const [datasetFilter, setDatasetFilter] = useState('')
 
   // F-01/B-01: 後端分頁，limit=1000 確保統計完整
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['submissions', statusFilter, productFilter, datasetFilter],
     queryFn: () =>
       submissionsApi.list({
@@ -208,7 +208,17 @@ export default function SubmissionListPage() {
       </div>
 
       {/* Table */}
-      {error && <p className="text-red-500">載入失敗</p>}
+      {error && (
+        <div className="flex items-center gap-3 text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-3 mb-4">
+          <span>載入失敗，請確認服務狀態</span>
+          <button
+            onClick={() => refetch()}
+            className="ml-auto text-sm font-medium underline hover:no-underline"
+          >
+            重試
+          </button>
+        </div>
+      )}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-x-auto">
         {filteredData && filteredData.length > 0 ? (
           <table className="min-w-full text-sm">
