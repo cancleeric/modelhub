@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { getCachedUserInfo, logout } from '../auth'
 import { versionApi } from '../api/client'
+import NotificationBell from './NotificationBell'
 import {
   Cpu,
   FilePlus,
@@ -17,6 +18,7 @@ import {
   Menu,
   X,
   LogOut,
+  Package,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -50,8 +52,9 @@ const NAV_GROUPS: {
   {
     label: '系統',
     items: [
-      { to: '/queue',          label: '訓練隊列', Icon: Clock },
-      { to: '/admin/api-keys', label: 'API Keys', Icon: Key },
+      { to: '/queue',           label: '訓練隊列', Icon: Clock },
+      { to: '/admin/api-keys',  label: 'API Keys', Icon: Key },
+      { to: '/external-models', label: '外部模型', Icon: Package },
     ],
   },
 ]
@@ -174,10 +177,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           >
             <Menu size={22} />
           </button>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-1">
             <Cpu size={20} />
             <span className="font-bold tracking-wide">ModelHub</span>
           </div>
+          <NotificationBell />
         </header>
 
         {/* Drawer overlay */}

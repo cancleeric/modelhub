@@ -360,3 +360,121 @@ export const registryApi = {
       })
       .then((r) => r.data),
 }
+
+// --- Comments API (M22) ---
+
+export interface AttachmentOut {
+  id: number
+  filename: string
+  size_bytes: number
+  mime_type: string
+  uploaded_by: string
+  uploaded_at: string
+}
+
+export interface CommentOut {
+  id: number
+  req_no: string
+  author_email: string
+  body_markdown: string
+  is_internal: boolean
+  parent_id: number | null
+  created_at: string
+  updated_at: string | null
+  deleted_at: string | null
+  attachments: AttachmentOut[]
+  replies: CommentOut[]
+  mentioned_users: string[]
+}
+
+export interface CommentCreatePayload {
+  body_markdown: string
+  is_internal?: boolean
+  parent_id?: number | null
+  attachment_ids?: number[]
+}
+
+export const commentsApi = {
+  list: (req_no: string) =>
+    api.get<CommentOut[]>(`/api/submissions/${req_no}/comments`).then((r) => r.data),
+
+  create: (req_no: string, payload: CommentCreatePayload) =>
+    api.post<CommentOut>(`/api/submissions/${req_no}/comments`, payload).then((r) => r.data),
+
+  edit: (comment_id: number, body_markdown: string) =>
+    api.patch<CommentOut>(`/api/comments/${comment_id}`, { body_markdown }).then((r) => r.data),
+
+  delete: (comment_id: number) =>
+    api.delete(`/api/comments/${comment_id}`).then((r) => r.data),
+
+  search: (params: { req_no?: string; author?: string; keyword?: string }) =>
+    api.get<CommentOut[]>('/api/comments/search', { params }).then((r) => r.data),
+}
+
+// --- Attachments API (M22) ---
+
+export const attachmentsApi = {
+  upload: (req_no: string, file: File, comment_id?: number) => {
+    const form = new FormData()
+    form.append('file', file)
+    if (comment_id != null) form.append('comment_id', String(comment_id))
+    return api
+      .post<AttachmentOut>(`/api/submissions/${req_no}/attachments`, form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      .then((r) => r.data)
+  },
+
+  download: (attachment_id: number) =>
+    api.get(`/api/attachments/${attachment_id}`, { responseType: 'blob' }).then((r) => r.data),
+
+  delete: (attachment_id: number) =>
+    api.delete(`/api/attachments/${attachment_id}`).then((r) => r.data),
+}
+
+// --- Notifications API (M22) ---
+
+export interface NotificationOut {
+  id: number
+  comment_id: number
+  recipient_email: string
+  type: string
+  req_no: string
+  read_at: string | null
+  created_at: string
+}
+
+export const notificationsApi = {
+  list: (params?: { unread_only?: boolean; page?: number; page_size?: number }) =>
+    api.get<NotificationOut[]>('/api/notifications', { params }).then((r) => r.data),
+
+  markRead: (ids?: number[]) =>
+    api.post<{ marked_read: number }>('/api/notifications/mark-read', { ids: ids ?? null }).then((r) => r.data),
+}
+
+// --- External Models API (M22) ---
+
+export interface ExternalModelOut {
+  id: number
+  req_no: string
+  product: string
+  model_name: string
+  version: string
+  arch: string | null
+  status: string
+  file_path: string | null
+  external_source: string | null
+  external_sha256: string | null
+  size_bytes: number | null
+  last_used_at: string | null
+  notes: string | null
+  created_at: string
+}
+
+export const externalModelsApi = {
+  list: (product?: string) =>
+    api.get<ExternalModelOut[]>('/api/external-models/', { params: product ? { product } : {} }).then((r) => r.data),
+
+  getPath: (product: string, name: string) =>
+    api.get(`/api/external-models/${product}/${name}/path`).then((r) => r.data),
+}

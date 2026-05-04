@@ -14,6 +14,8 @@ API:
   query param: model_type=classification|detection（預設由 MODEL_CONFIGS 決定）
 """
 
+from __future__ import annotations
+
 import io
 import json
 import logging

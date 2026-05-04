@@ -4,6 +4,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { submissionsApi, registryApi, type Submission, type SubmissionHistoryItem } from '../api/client'
 import StatusBadge from '../components/StatusBadge'
 import RejectModal from '../components/RejectModal'
+import SubmissionComments from '../components/SubmissionComments'
+import { getCachedUserInfo } from '../auth'
 
 const LIGHTNING_STUDIO_URL = (studioName: string) =>
   `https://lightning.ai/cancleeric/studios/${studioName}`
@@ -39,7 +41,7 @@ const KAGGLE_STATUS_COLOR: Record<string, string> = {
   error:    'bg-red-100 text-red-700',
 }
 
-type TabKey = 'info' | 'history' | 'kaggle'
+type TabKey = 'info' | 'history' | 'kaggle' | 'discussion'
 
 export default function SubmissionDetailPage() {
   const { req_no } = useParams<{ req_no: string }>()
@@ -254,7 +256,7 @@ export default function SubmissionDetailPage() {
 
       {/* Tabs */}
       <div className="flex gap-2 mb-4 border-b">
-        {(['info', 'kaggle', 'history'] as TabKey[]).map((t) => (
+        {(['info', 'kaggle', 'history', 'discussion'] as TabKey[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -264,7 +266,7 @@ export default function SubmissionDetailPage() {
                 : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
           >
-            {t === 'info' ? '需求資訊' : t === 'kaggle' ? '訓練狀態' : '審核軌跡'}
+            {t === 'info' ? '需求資訊' : t === 'kaggle' ? '訓練狀態' : t === 'history' ? '審核軌跡' : '討論'}
           </button>
         ))}
       </div>
@@ -816,6 +818,16 @@ export default function SubmissionDetailPage() {
               ))}
             </ol>
           )}
+        </div>
+      )}
+
+      {tab === 'discussion' && req_no && (
+        <div className="bg-white rounded shadow p-5">
+          <SubmissionComments
+            req_no={req_no}
+            currentUserEmail={getCachedUserInfo()?.email}
+            isPrivileged={false}
+          />
         </div>
       )}
 

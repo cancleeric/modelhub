@@ -15,6 +15,7 @@ import StatsPage from './pages/StatsPage'
 import ApiKeyPage from './pages/ApiKeyPage'
 import PredictPage from './pages/PredictPage'
 import QueuePage from './pages/QueuePage'
+import ExternalModelsPage from './pages/ExternalModelsPage'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -53,6 +54,7 @@ export default function App() {
                     <Route path="/admin/api-keys" element={<ApiKeyPage />} />
                     <Route path="/predict" element={<PredictPage />} />
                     <Route path="/queue" element={<QueuePage />} />
+                    <Route path="/external-models" element={<ExternalModelsPage />} />
                   </Routes>
                 </Layout>
               </ProtectedRoute>
