@@ -10,6 +10,7 @@ from routers import comments as comments_router
 from routers import attachments as attachments_router
 from routers import notifications as notifications_router
 from routers import external_models as external_models_router
+from routers import chat_completions as chat_completions_router
 from models import init_db
 from pollers.kaggle_poller import start_scheduler, stop_scheduler
 import pollers.lightning_poller as _lightning_poller
@@ -82,6 +83,7 @@ app.include_router(comments_router.router, prefix="/api", tags=["comments"])
 app.include_router(attachments_router.router, prefix="/api", tags=["attachments"])
 app.include_router(notifications_router.router, prefix="/api", tags=["notifications"])
 app.include_router(external_models_router.router, prefix="/api/external-models", tags=["external-models"])
+app.include_router(chat_completions_router.router, prefix="/v1", tags=["chat"])
 
 
 @app.get("/health")
