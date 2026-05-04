@@ -62,6 +62,21 @@ services:
     networks:
       - squid_dev_network
 
+  modelhub-connector-dev:
+    build:
+      context: ./connector
+    container_name: modelhub-connector-dev
+    restart: unless-stopped
+    networks:
+      - squid_dev_network
+    environment:
+      - BRAIN_CLOUD_WS_URL=ws://brain-cloud-dev:8932/ws/llm-provider
+      - BRAIN_PROVIDER_API_KEY=${BRAIN_PROVIDER_API_KEY}
+      - MODELHUB_API_URL=http://modelhub-api-dev:8000
+      - MODELHUB_API_KEY=${MODELHUB_API_KEY}
+    depends_on:
+      - modelhub-api
+
   modelhub-inference:
     build: ./inference-server
     container_name: modelhub-inference-dev

@@ -2,22 +2,27 @@
 chat_completions.py — OpenAI-compatible /v1/chat/completions endpoint
 
 讓 brain-llm-connector 的 LlmHandler（AsyncOpenAI client）可以直接呼叫 ModelHub，
-零改動即可取得圖像分類推論結果。
+零改動即可取得圖像分類推論結果，或呼叫文字生成模型。
 
 支援的 model 格式：
   "modelhub/mh-2026-010"  → strip 前綴得 slug "mh-2026-010"
   "modelhub/MH-2026-010"  → slug 統一 lower-case
 
-流程：
-  1. 解析 model slug
-  2. 確認 slug 在 inference server registry 裡
-  3. 從 messages 找最後一個 image_url content part
-  4. POST multipart/form-data → http://localhost:8951/predict/{slug}
-  5. 把 classification 結果包裝成 OpenAI chat.completion response
+流程（有圖片 → 圖像路徑；無圖片 → 文字路徑）：
+  有圖片：
+    1. 解析 model slug
+    2. 確認 slug 在 inference server registry 裡
+    3. 從 messages 找最後一個 image_url content part
+    4. POST multipart/form-data → {MODELHUB_INFER_URL}/predict/{slug}
+    5. 把 classification 結果包裝成 OpenAI chat.completion response
+  無圖片（純文字）：
+    1. 解析 model slug
+    2. POST JSON → {MODELHUB_INFER_URL}/generate/{slug}（目前回傳 501）
+    3. 未來文字生成模型上線後，此路徑自動生效
 
 錯誤：
   404 — slug 不在 inference server 支援清單
-  400 — 沒有圖片
+  501 — 純文字請求，文字生成尚未支援
   503 — inference server 無回應
 """
 
@@ -83,6 +88,29 @@ def _parse_slug(model: str) -> str:
     if model.startswith("modelhub/"):
         return model[len("modelhub/"):].lower()
     return model.lower()
+
+
+def _has_image(messages: list[Message]) -> bool:
+    """
+    判斷 messages 中是否包含圖片（image_url content part 或 data URI）。
+    """
+    import re as _re
+
+    for msg in messages:
+        content = msg.content
+        if isinstance(content, str):
+            if _re.search(r'data:image/[^;]+;base64,[A-Za-z0-9+/=]+', content):
+                return True
+            continue
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict):
+                    if part.get("type") == "image_url" and part.get("image_url", {}).get("url"):
+                        return True
+                elif hasattr(part, "type"):
+                    if part.type == "image_url" and part.image_url:
+                        return True
+    return False
 
 
 def _extract_image(messages: list[Message]) -> bytes:
@@ -290,7 +318,8 @@ async def chat_completions(
     brain-llm-connector 的 LlmHandler（AsyncOpenAI client）可直接呼叫，零改動。
 
     - model: "modelhub/<slug>"（例如 "modelhub/mh-2026-010"）
-    - messages: 最後一個 image_url content part 的圖片會被送去推論
+    - messages 含圖片 → 走圖像分類路徑（/predict/{slug}）
+    - messages 純文字 → 走文字生成路徑（/generate/{slug}，目前回傳 501）
     - 認證：X-Api-Key header
 
     回傳 OpenAI chat.completion format。
@@ -298,16 +327,44 @@ async def chat_completions(
     slug = _parse_slug(req.model)
     logger.info("chat_completions: model=%s slug=%s", req.model, slug)
 
-    # 1. 確認 slug 存在於 inference server registry
-    await _check_slug_in_registry(slug)
+    if _has_image(req.messages):
+        # ── 圖像路徑 ──────────────────────────────────────────────────────
+        # 1. 確認 slug 存在於 inference server registry
+        await _check_slug_in_registry(slug)
 
-    # 2. 從 messages 提取圖片
-    img_bytes = _extract_image(req.messages)
+        # 2. 從 messages 提取圖片
+        img_bytes = _extract_image(req.messages)
 
-    # 3. 呼叫 inference server
-    result = await _call_inference(slug, img_bytes)
-    logger.info("chat_completions: slug=%s prediction=%s confidence=%s",
-                slug, result.get("prediction"), result.get("confidence"))
+        # 3. 呼叫 inference server
+        result = await _call_inference(slug, img_bytes)
+        logger.info("chat_completions: slug=%s prediction=%s confidence=%s",
+                    slug, result.get("prediction"), result.get("confidence"))
 
-    # 4. 包裝 OpenAI response
-    return _format_response(req.model, result)
+        # 4. 包裝 OpenAI response
+        return _format_response(req.model, result)
+
+    else:
+        # ── 文字生成路徑 ──────────────────────────────────────────────────
+        # 純文字請求，嘗試呼叫 /generate/{slug}。
+        # 目前 inference server 尚未實作此 endpoint，回傳 501。
+        # 當文字生成模型上線後，此路徑會自動通。
+        logger.info("chat_completions: 純文字請求 → /generate/%s", slug)
+        try:
+            async with httpx.AsyncClient(timeout=INFERENCE_TIMEOUT) as client:
+                resp = await client.post(
+                    f"{INFERENCE_SERVER_URL}/generate/{slug}",
+                    json={"messages": [m.model_dump() for m in req.messages]},
+                )
+            if resp.status_code == 200:
+                result = resp.json()
+                return _format_response(req.model, result)
+            # inference server 回 404 或 501 → 統一回 501
+        except httpx.ConnectError:
+            pass  # inference server 未啟動，也走 501
+        except Exception as e:
+            logger.warning("chat_completions: /generate/%s 呼叫異常: %s", slug, e)
+
+        raise HTTPException(
+            status_code=501,
+            detail="text generation not yet supported for this model",
+        )
