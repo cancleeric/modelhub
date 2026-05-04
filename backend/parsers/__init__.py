@@ -6,6 +6,7 @@ from typing import Optional
 from .yolo import parse_yolo_log
 from .classification import parse_classification_log
 from .ocr import parse_ocr_log
+from .xgboost_text import parse_xgboost_text_log
 
 
 def parse_training_log(arch: Optional[str], log_text: str) -> dict:  # P3-26: str | None → Optional[str]
@@ -24,4 +25,6 @@ def parse_training_log(arch: Optional[str], log_text: str) -> dict:  # P3-26: st
         return parse_classification_log(log_text)
     if "ocr" in arch or "crnn" in arch or "trocr" in arch:
         return parse_ocr_log(log_text)
+    if "xgboost" in arch or "sklearn" in arch or "text" in arch:
+        return parse_xgboost_text_log(log_text)
     return parse_yolo_log(log_text)
