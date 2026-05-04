@@ -199,6 +199,12 @@ def _process_submission(
     Sprint 17 P1-4: 改讀 submission.lightning_studio_name（若有設定）。
     TODO: 完整邏輯待 API Key 後補完。
     """
+    # 幂等保護：已達終態直接跳過
+    if submission.status in ("training_failed", "failed", "trained", "accepted", "rejected"):
+        logger.debug("_process_submission(lightning): req=%s already terminal status=%s, skip",
+                     submission.req_no, submission.status)
+        return
+
     # P1-4: 優先讀 lightning_studio_name 欄位
     studio_name = getattr(submission, "lightning_studio_name", None) or \
                   getattr(submission, "kaggle_kernel_slug", None)

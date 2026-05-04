@@ -444,8 +444,9 @@ def _append_training_failed_summary(db: Session, sub: Submission) -> None:
 
 
 async def _on_kernel_error(db: Session, sub: Submission, raw: str) -> None:
-    # 幂等保護：已達終態（failed/trained/accepted）直接跳過
-    if sub.status in ("failed", "trained", "accepted", "rejected"):
+    # 幂等保護：已達終態直接跳過，避免重複處理
+    # training_failed = Kaggle/Lightning 訓練失敗；failed = QA 審查失敗
+    if sub.status in ("training_failed", "failed", "trained", "accepted", "rejected"):
         logger.debug("_on_kernel_error: req=%s already terminal status=%s, skip", sub.req_no, sub.status)
         return
 

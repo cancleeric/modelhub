@@ -314,3 +314,78 @@ class TestFetchKernelStatusParsing:
 
         assert result is not None
         assert result["status"] == "error"
+
+
+# ---------------------------------------------------------------------------
+# _on_kernel_error 幂等保護測試（Sprint 26 fix）
+# ---------------------------------------------------------------------------
+
+class TestOnKernelErrorIdempotent:
+    """
+    驗證 _on_kernel_error 在 submission 已達終態時直接跳過，
+    不重複寫 history 或修改 status。
+    """
+
+    @pytest.mark.asyncio
+    async def test_skips_when_status_is_training_failed(self):
+        """status=training_failed 時，_on_kernel_error 應直接 return 不做任何修改"""
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+        from unittest.mock import MagicMock, AsyncMock, patch
+        import pollers.kaggle_poller as kp
+
+        sub = _make_sub("MH-TEST-001", kaggle_status="error", status="training_failed")
+        db = MagicMock()
+
+        original_kaggle_status = sub.kaggle_status
+        original_status = sub.status
+
+        await kp._on_kernel_error(db, sub, "raw error text")
+
+        # status 不應被修改
+        assert sub.status == original_status
+        assert sub.kaggle_status == original_kaggle_status
+        # DB 不應被 commit
+        db.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_skips_when_status_is_trained(self):
+        """status=trained 時也應跳過"""
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+        from unittest.mock import MagicMock
+        import pollers.kaggle_poller as kp
+
+        sub = _make_sub("MH-TEST-002", kaggle_status="complete", status="trained")
+        db = MagicMock()
+
+        await kp._on_kernel_error(db, sub, "")
+
+        assert sub.status == "trained"
+        db.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_processes_when_status_is_training(self):
+        """status=training 且 retry 未耗盡時，應正常觸發 retry"""
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+        from unittest.mock import MagicMock, patch
+        import pollers.kaggle_poller as kp
+
+        sub = _make_sub("MH-TEST-003", kaggle_status="running", status="training")
+        sub.retry_count = 0
+        sub.max_retries = 2
+        db = MagicMock()
+
+        with patch("pollers.kaggle_poller._append_history") as mock_hist, \
+             patch("pollers.kaggle_poller._push_kernel", return_value=True):
+            await kp._on_kernel_error(db, sub, "error")
+
+        # retry_count 應增加到 1
+        assert sub.retry_count == 1
+        assert sub.kaggle_status == "queued"
+        mock_hist.assert_called_once()
+        db.commit.assert_called()
