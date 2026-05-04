@@ -100,8 +100,8 @@ def _process_submission(db: Session, sub: Submission) -> None:
                     asyncio.run_coroutine_threadsafe(notify_event("training_overtime", sub), loop)
                 except RuntimeError:
                     asyncio.run(notify_event("training_overtime", sub))
-                except Exception:
-                    pass
+                except Exception as _e:
+                    logger.warning("req=%s notify training_overtime failed: %s", sub.req_no, _e)
 
 
 def _on_ssh_complete(db: Session, sub: Submission, host: str, launcher) -> None:
@@ -136,8 +136,8 @@ def _on_ssh_complete(db: Session, sub: Submission, host: str, launcher) -> None:
     if per_class and isinstance(per_class, dict):
         try:
             sub.per_class_metrics = json.dumps(per_class, ensure_ascii=False)
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.warning("req=%s per_class_metrics serialize failed: %s", sub.req_no, _e)
 
     # P1-3: 從 result.json 讀取追溯性欄位（若無則寫 None）
     # TODO: training 腳本應在 result.json 補上 dataset_snapshot_id / train_commit_hash / hyperparams
@@ -146,8 +146,10 @@ def _on_ssh_complete(db: Session, sub: Submission, host: str, launcher) -> None:
     try:
         with open(result_json_path) as _f:
             result_data = json.load(_f)
-    except Exception:
-        pass
+    except FileNotFoundError:
+        logger.debug("req=%s result.json not found at %s, traceability fields will be None", sub.req_no, result_json_path)
+    except Exception as _e:
+        logger.warning("req=%s result.json parse failed: %s", sub.req_no, _e)
     dataset_snapshot_id = result_data.get("dataset_snapshot_id")
     train_commit_hash = result_data.get("train_commit_hash")
     hyperparams_json = result_data.get("hyperparams")  # dict or None
@@ -198,8 +200,8 @@ def _on_ssh_complete(db: Session, sub: Submission, host: str, launcher) -> None:
         asyncio.run_coroutine_threadsafe(notify_event("training_complete", sub), loop)
     except RuntimeError:
         asyncio.run(notify_event("training_complete", sub))
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.warning("req=%s notify training_complete failed: %s", sub.req_no, _e)
 
 
 def _on_ssh_error(db: Session, sub: Submission) -> None:
@@ -220,8 +222,8 @@ def _on_ssh_error(db: Session, sub: Submission) -> None:
         asyncio.run_coroutine_threadsafe(notify_event("training_failed", sub), loop)
     except RuntimeError:
         asyncio.run(notify_event("training_failed", sub))
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.warning("req=%s notify training_failed failed: %s", sub.req_no, _e)
 
     # 更新 queue 狀態
     try:

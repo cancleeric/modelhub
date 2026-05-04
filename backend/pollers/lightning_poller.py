@@ -257,8 +257,8 @@ def _process_submission(
             import json as _json_pc
             try:
                 submission.per_class_metrics = _json_pc.dumps(per_class, ensure_ascii=False)
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.warning("submission %s per_class_metrics serialize failed: %s", submission.req_no, _e)
 
         # 建 ModelVersion（P1-8: 使用共用 _next_version_for）
         from models import ModelVersion as _ModelVersion
@@ -314,8 +314,8 @@ def _process_submission(
             asyncio.run_coroutine_threadsafe(notify_event("training_complete", submission), loop)
         except RuntimeError:
             asyncio.run(notify_event("training_complete", submission))
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.warning("submission %s notify training_complete failed: %s", submission.req_no, _e)
 
     elif status == "error":
         submission.status = "failed"
@@ -343,8 +343,8 @@ def _process_submission(
             asyncio.run_coroutine_threadsafe(notify_event("training_failed", submission), loop)
         except RuntimeError:
             asyncio.run(notify_event("training_failed", submission))
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.warning("submission %s notify training_failed failed: %s", submission.req_no, _e)
 
     # Overtime 偵測
     training_started = getattr(submission, "training_started_at", None)
@@ -361,8 +361,8 @@ def _process_submission(
                 asyncio.run_coroutine_threadsafe(notify_event("training_overtime", submission), loop)
             except RuntimeError:
                 asyncio.run(notify_event("training_overtime", submission))
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.warning("submission %s notify training_overtime failed: %s", submission.req_no, _e)
 
 
 def _check_lightning_quota_warning(db: Session) -> None:
@@ -422,8 +422,8 @@ def _check_lightning_quota_warning(db: Session) -> None:
                 f"[ModelHub] Lightning 配額預警：本月剩餘 {remaining:.1f} 小時，"
                 f"低於 {QUOTA_WARN_THRESHOLD}h 閾值。",
             ))
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.warning("_check_lightning_quota_warning notify failed: %s", _e)
         logger.warning("Lightning quota warning sent: remaining=%.1fh", remaining)
     except Exception as e:
         logger.warning("_check_lightning_quota_warning failed: %s", e)

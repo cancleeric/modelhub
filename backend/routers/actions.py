@@ -521,8 +521,8 @@ def _handle_start_training_resource(obj: Submission, db: Session) -> None:
                     loop.create_task(_notify_event("training_blocked", obj, note="no_online_resource"))
                 else:
                     loop.run_until_complete(_notify_event("training_blocked", obj, note="no_online_resource"))
-            except Exception:
-                pass
+            except Exception as _e:
+                _logger.warning("notify training_blocked failed: %s", _e)
             return
 
         # Sprint 23 Task 23-2: SSH 分支實際呼叫 SSHLauncher

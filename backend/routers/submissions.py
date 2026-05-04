@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
@@ -7,6 +8,8 @@ from sqlalchemy import func
 
 from models import Submission, ModelVersion, get_db
 from auth import CurrentUser, CurrentUserOrApiKey
+
+_logger = logging.getLogger("modelhub.routers.submissions")
 
 router = APIRouter()
 
@@ -486,8 +489,8 @@ async def update_training_result(
         import json as _json
         try:
             obj.per_class_metrics = _json.dumps(payload.per_class_metrics, ensure_ascii=False)
-        except Exception:
-            pass
+        except Exception as _e:
+            _logger.warning("req=%s per_class_metrics serialize failed: %s", req_no, _e)
 
     if payload.model_path:
         obj.model_output_path = payload.model_path  # Sprint 10: 寫入專屬欄位
@@ -514,8 +517,8 @@ async def update_training_result(
                     mv.pass_fail = "pass" if map50_val >= obj.map50_target else "fail"
                 elif map50_val is not None and obj.map50_threshold is not None:
                     mv.pass_fail = "pass" if map50_val >= obj.map50_threshold else "fail"
-        except Exception:
-            pass
+        except Exception as _e:
+            _logger.warning("req=%s ModelVersion update failed: %s", req_no, _e)
 
     if payload.notes:
         obj.reviewer_note = (obj.reviewer_note or "") + f"\n[auto] {payload.notes}"
