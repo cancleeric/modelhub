@@ -1,0 +1,13 @@
+# ModelHub Connector dependencies
+
+# WebSocket client（連 brain-cloud）
+websockets>=12.0
+
+# OpenAI-compatible client（呼叫 ModelHub /v1/chat/completions）
+openai>=1.30.0
+
+# HTTP client（查 ModelHub /v1/models）
+httpx>=0.27.0
+
+# Observability
+structlog>=24.0
