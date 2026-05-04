@@ -1,0 +1,763 @@
+"""
+Kaggle Kernel poller — Sprint 3 / 4
+
+每 60 秒 poll 所有 status=training 的 submission：
+- 狀態變化寫 submission_history
+- complete 時下載 output → 解析 metrics → 建 ModelVersion
+- error 時標記 training_failed
+- >24 小時未完成 → 通知 CTO overtime
+
+kaggle SDK 需要 KAGGLE_USERNAME + KAGGLE_KEY env var。
+如果 env var 未設，poller 還是會啟動但會 log warning，並跳過 API 呼叫。
+"""
+
+import asyncio
+import json
+import logging
+import os
+import re
+import shutil
+import subprocess
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Optional
+
+from sqlalchemy.orm import Session
+
+from models import SessionLocal, Submission, ModelVersion
+from parsers import parse_training_log
+from notifications import notify_event
+from utils import next_version_for as _next_version_for, read_log_files as _read_log_files
+
+logger = logging.getLogger("modelhub.poller.kaggle")
+
+POLL_INTERVAL_SECONDS = int(os.environ.get("MODELHUB_KAGGLE_POLL_INTERVAL", "60"))
+OVERTIME_HOURS = int(os.environ.get("MODELHUB_TRAINING_OVERTIME_HOURS", "24"))
+KAGGLE_DOWNLOAD_DIR = os.environ.get("MODELHUB_KAGGLE_DL_DIR", "/tmp/modelhub-kaggle")
+
+# Kaggle P100 成本估算（$0.5/hr）
+GPU_USD_PER_HOUR = float(os.environ.get("MODELHUB_GPU_USD_PER_HOUR", "0.5"))
+
+# Sprint 15 P0-3: Kaggle 免費配額時不計費
+# KAGGLE_IS_PAID_TIER=false（預設）→ estimated_cost_usd=0，仍記錄 gpu_seconds
+KAGGLE_IS_PAID_TIER = os.environ.get("KAGGLE_IS_PAID_TIER", "false").lower() == "true"
+
+
+def _kaggle_env_ready() -> bool:
+    """
+    Kaggle 認證就緒判斷：
+    1. KAGGLE_USERNAME + KAGGLE_KEY env var（優先）
+    2. ~/.kaggle/kaggle.json 存在（自動載入 env var，供 subprocess CLI 使用）
+    """
+    if os.environ.get("KAGGLE_USERNAME") and os.environ.get("KAGGLE_KEY"):
+        return True
+    # 嘗試從 kaggle.json 載入並注入 env var
+    kaggle_json_path = Path(os.path.expanduser("~/.kaggle/kaggle.json"))
+    if kaggle_json_path.exists():
+        try:
+            creds = json.loads(kaggle_json_path.read_text())
+            username = creds.get("username", "")
+            key = creds.get("key", "")
+            if username and key:
+                os.environ["KAGGLE_USERNAME"] = username
+                os.environ["KAGGLE_KEY"] = key
+                logger.info(
+                    "[poller] Loaded Kaggle credentials from %s (username=%s)",
+                    kaggle_json_path, username,
+                )
+                return True
+        except Exception as e:
+            logger.warning("[poller] Failed to parse kaggle.json: %s", e)
+    return False
+
+
+def _get_kaggle_api():
+    """Lazy import kaggle SDK（authenticate 需要 env 已設）"""
+    try:
+        from kaggle.api.kaggle_api_extended import KaggleApi  # type: ignore
+        api = KaggleApi()
+        api.authenticate()
+        return api
+    except Exception as e:
+        logger.warning("Kaggle SDK unavailable: %s", e)
+        return None
+
+
+async def _fetch_kernel_status(api, slug: str) -> Optional[dict]:
+    """
+    呼叫 kaggle kernels status <slug>
+    kaggle SDK 沒有純 Python status API，用 subprocess 最穩。
+    """
+    if not shutil.which("kaggle"):
+        logger.warning("kaggle CLI not in PATH, skipping status fetch")
+        return None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "kaggle", "kernels", "status", slug,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30.0)
+        if proc.returncode != 0:
+            logger.warning("kaggle status fail (slug=%s): %s",
+                           slug, stderr.decode(errors="replace"))
+            return None
+        out = stdout.decode(errors="replace")
+        # 預期輸出樣例：`<slug> has status "complete"` / "running" / "error" / "queued"
+        m = re.search(r'status\s+"?(\w+)"?', out)
+        if not m:
+            return None
+        return {"status": m.group(1).lower(), "raw": out.strip()}
+    except Exception as e:
+        logger.warning("kaggle status exception (slug=%s): %s", slug, e)
+        return None
+
+
+async def _download_kernel_output(slug: str, dest_dir: str) -> Optional[str]:
+    """下載 kernel 的 output log，回傳本地資料夾路徑"""
+    if not shutil.which("kaggle"):
+        return None
+    Path(dest_dir).mkdir(parents=True, exist_ok=True)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "kaggle", "kernels", "output", slug, "-p", dest_dir,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120.0)
+        if proc.returncode != 0:
+            logger.warning("kaggle output fail (slug=%s): %s",
+                           slug, stderr.decode(errors="replace"))
+            return None
+        return dest_dir
+    except Exception as e:
+        logger.warning("kaggle output exception (slug=%s): %s", slug, e)
+        return None
+
+
+# P3-28: _read_log_files 已移至 utils.read_log_files，透過 import 取得
+
+
+def _append_history(db: Session, req_no: str, action: str, meta: Optional[dict] = None,
+                    note: Optional[str] = None) -> None:
+    from models import SubmissionHistory
+    row = SubmissionHistory(
+        req_no=req_no,
+        action=action,
+        actor="kaggle-poller",
+        note=note,
+        meta=json.dumps(meta, ensure_ascii=False) if meta else None,
+    )
+    db.add(row)
+
+
+def _parse_result_obj(obj: dict) -> dict:
+    """
+    將 result dict 轉為 {"metrics": {...}, "per_class": ...} 格式。
+    共用於 _read_result_json（檔案）和 _read_result_json_from_log（log fallback）。
+    """
+    metrics: dict = {}
+    # --- YOLO / 物件偵測格式 ---
+    if "map50" in obj:
+        metrics["map50"] = float(obj["map50"])
+    if "map50_95" in obj:
+        metrics["map50_95"] = float(obj["map50_95"])
+    if "epochs" in obj:
+        metrics["epochs"] = int(obj["epochs"])
+    if "batch_size" in obj:
+        metrics["batch_size"] = int(obj["batch_size"])
+    per_class = obj.get("per_class_map50") or {}
+
+    # --- OCR 格式 ---
+    exact_match = obj.get("test_exact_match") or obj.get("exact_match")
+    cer = obj.get("test_cer") or obj.get("val_cer") or obj.get("cer")
+    if exact_match is not None and "map50" not in metrics:
+        metrics["map50"] = float(exact_match)
+    if cer is not None:
+        metrics["ocr_cer"] = float(cer)
+
+    return {"metrics": metrics, "per_class": per_class or None}
+
+
+def _read_result_json_from_log(dest_dir: str) -> dict:
+    """
+    Fallback：從 log 文件（.log）中搜尋 ##RESULT_JSON##: 標記行解析指標。
+    用於 kaggle kernels output 無法下載 result.json 時（Script kernel 限制）。
+    """
+    MARKER = "##RESULT_JSON##:"
+    log_dir = Path(dest_dir)
+    for log_file in sorted(log_dir.glob("*.log")):
+        try:
+            for line in log_file.read_text(encoding="utf-8", errors="replace").splitlines():
+                # log 格式可能是 JSONL stream，搜尋含 MARKER 的 "data" 欄位
+                if MARKER in line:
+                    # 直接在行中找 MARKER
+                    idx = line.find(MARKER)
+                    payload = line[idx + len(MARKER):]
+                    # 若在 JSONL wrapper 中，payload 可能有尾端的 < 等 escape
+                    # 嘗試直接 json.loads
+                    try:
+                        obj = json.loads(payload)
+                        result = _parse_result_obj(obj)
+                        logger.info(
+                            "_read_result_json_from_log: parsed from %s, map50=%s",
+                            log_file.name, result.get("metrics", {}).get("map50"),
+                        )
+                        return result
+                    except json.JSONDecodeError:
+                        pass
+                # JSONL wrapper：{"stream_name":..., "data":"...##RESULT_JSON##:..."}
+                if '"data"' in line and MARKER in line:
+                    try:
+                        wrapper = json.loads(line.strip().rstrip(","))
+                        data_str = wrapper.get("data", "")
+                        if MARKER in data_str:
+                            idx = data_str.find(MARKER)
+                            payload = data_str[idx + len(MARKER):]
+                            obj = json.loads(payload)
+                            result = _parse_result_obj(obj)
+                            logger.info(
+                                "_read_result_json_from_log(jsonl): parsed from %s, map50=%s",
+                                log_file.name, result.get("metrics", {}).get("map50"),
+                            )
+                            return result
+                    except (json.JSONDecodeError, KeyError):
+                        pass
+        except Exception as e:
+            logger.warning("_read_result_json_from_log failed reading %s: %s", log_file, e)
+    return {}
+
+
+def _read_result_json(dest_dir: str) -> dict:
+    """
+    讀取 kernel output 目錄下的 result.json。
+
+    支援兩種 metrics 格式：
+    1. YOLO / 物件偵測：含 map50 / map50_95 欄位
+    2. OCR：含 cer / exact_match（或 test_cer / test_exact_match）欄位
+       - exact_match 會對應到 map50（作為主要品質指標）
+       - cer 寫入 ocr_cer（供 notes 使用）
+
+    若 result.json 不存在（Kaggle Script kernel 無法自動下載工作目錄檔案），
+    自動 fallback 到從 .log 文件解析 ##RESULT_JSON##: 標記行。
+
+    若存在且含支援的指標，回傳解析結果；否則回傳 {}。
+    這是最可靠的 metrics 來源（kernel 已標準化輸出）。
+
+    Bug fix (2026-04-27): 原本缺少 OCR 指標支援，導致 MH-009 等 OCR 任務
+    的 metrics 無法寫入 model_versions.map50。
+    Fix (2026-05-04): 加入 log fallback（##RESULT_JSON##:），解決 Kaggle Script
+    kernel 無法透過 kaggle kernels output 下載 result.json 的問題。
+    """
+    result_path = Path(dest_dir) / "result.json"
+    if result_path.exists():
+        try:
+            obj = json.loads(result_path.read_text())
+            return _parse_result_obj(obj)
+        except Exception as e:
+            logger.warning("_read_result_json failed (%s): %s", result_path, e)
+
+    # Fallback：從 log 解析 ##RESULT_JSON##: 標記
+    logger.info("_read_result_json: result.json not found, trying log fallback (%s)", dest_dir)
+    return _read_result_json_from_log(dest_dir)
+
+
+def _compute_pass_fail(map50: float, threshold: float) -> str:
+    """依 map50_threshold 判斷 pass/fail。"""
+    if map50 >= threshold:
+        return "pass"
+    return "fail"
+
+
+async def _on_kernel_complete(db: Session, sub: Submission) -> None:
+    """complete → 下載 output → 解析 → 建 ModelVersion → status=trained"""
+    # 幂等 guard：若已是終態，直接跳過，避免重複建 ModelVersion
+    if sub.status in ("trained", "rejected", "accepted"):
+        logger.debug("_on_kernel_complete: req=%s status=%s already terminal, skip",
+                     sub.req_no, sub.status)
+        return
+    if not sub.kaggle_kernel_slug:
+        return
+    dest = os.path.join(KAGGLE_DOWNLOAD_DIR, sub.req_no)
+    downloaded = await _download_kernel_output(sub.kaggle_kernel_slug, dest)
+    metrics: dict = {}
+    parsed: dict = {}
+    log_text = ""
+    if downloaded:
+        # 優先讀 result.json（kernel 標準輸出，最可靠）
+        parsed = _read_result_json(downloaded)
+        if parsed.get("metrics"):
+            metrics = parsed["metrics"]
+            logger.info("_on_kernel_complete: req=%s metrics from result.json: %s",
+                        sub.req_no, metrics)
+        else:
+            # fallback：從 log 文字解析（支援 NDJSON 自動解碼）
+            log_text = _read_log_files(downloaded)
+            if log_text:
+                parsed = parse_training_log(sub.arch, log_text)
+                metrics = parsed.get("metrics", {}) or {}
+                logger.info("_on_kernel_complete: req=%s metrics from log parser: %s",
+                            sub.req_no, metrics)
+
+    now = datetime.utcnow()
+    sub.kaggle_status = "complete"
+    sub.kaggle_status_updated_at = now
+    sub.training_completed_at = now
+    sub.status = "trained"
+
+    # Sprint 4: GPU 時數估算（start → now）
+    # Sprint 15 P0-3: 免費配額時 cost=0，仍記錄 gpu_seconds
+    if sub.training_started_at:
+        gpu_seconds = int((now - sub.training_started_at).total_seconds())
+        sub.gpu_seconds = gpu_seconds
+        if KAGGLE_IS_PAID_TIER:
+            sub.estimated_cost_usd = round(gpu_seconds / 3600 * GPU_USD_PER_HOUR, 4)
+        else:
+            sub.estimated_cost_usd = 0.0
+
+    # 自動建 ModelVersion（pending_acceptance）
+    next_version = _next_version_for(db, sub.req_no)
+
+    # P3-4: 若有 per_class 指標，同步寫入 submission 並帶入 mv notes
+    per_class = parsed.get("per_class") or parsed.get("class_metrics") if downloaded else None
+    if per_class and isinstance(per_class, dict):
+        try:
+            sub.per_class_metrics = json.dumps(per_class, ensure_ascii=False)
+        except Exception:
+            pass
+
+    # 自動計算 pass_fail（依 submission 的 map50_threshold）
+    pass_fail: Optional[str] = None
+    map50_val = metrics.get("map50")
+
+    # Bug fix (2026-04-27): 若 result.json / log parser 都沒有 map50，
+    # fallback 到 sub.per_class_metrics（Kaggle kernel 可能只輸出 per_class，
+    # 不輸出頂層 map50）。取所有 class mAP50 的平均值作為整體 map50。
+    if map50_val is None and sub.per_class_metrics:
+        try:
+            pc = json.loads(sub.per_class_metrics) if isinstance(sub.per_class_metrics, str) else sub.per_class_metrics
+            if isinstance(pc, dict) and pc:
+                vals = [v for v in pc.values() if isinstance(v, (int, float))]
+                if vals:
+                    map50_val = round(sum(vals) / len(vals), 6)
+                    metrics["map50"] = map50_val
+                    logger.info(
+                        "_on_kernel_complete: req=%s map50=%.4f from per_class_metrics fallback (classes=%s)",
+                        sub.req_no, map50_val, list(pc.keys()),
+                    )
+        except Exception as _pc_e:
+            logger.warning("_on_kernel_complete: per_class_metrics fallback failed: %s", _pc_e)
+
+    if map50_val is not None:
+        threshold = sub.map50_threshold or 0.0
+        pass_fail = _compute_pass_fail(map50_val, threshold)
+        logger.info(
+            "_on_kernel_complete: req=%s map50=%.4f threshold=%.4f → pass_fail=%s",
+            sub.req_no, map50_val, threshold, pass_fail,
+        )
+
+    # 建 notes：包含 OCR 專屬指標（CER）若有
+    _notes_parts = [f"auto-filled by kaggle-poller at {now.isoformat()}"]
+    if metrics.get("ocr_cer") is not None:
+        _notes_parts.append(f"CER={metrics['ocr_cer']:.4f}")
+    mv_notes = "; ".join(_notes_parts)
+
+    mv = ModelVersion(
+        req_no=sub.req_no,
+        product=sub.product,
+        model_name=sub.req_name or f"{sub.product} model",
+        version=next_version,
+        train_date=now.strftime("%Y-%m-%d"),
+        map50=map50_val,
+        map50_95=metrics.get("map50_95"),
+        map50_actual=map50_val,
+        map50_95_actual=metrics.get("map50_95"),
+        epochs=metrics.get("epochs"),
+        batch_size=metrics.get("batch_size"),
+        arch=sub.arch,
+        kaggle_kernel_url=f"https://www.kaggle.com/code/{sub.kaggle_kernel_slug}",
+        status="pending_acceptance",
+        pass_fail=pass_fail,
+        notes=mv_notes,
+    )
+    db.add(mv)
+
+    _append_history(
+        db,
+        req_no=sub.req_no,
+        action="training_complete",
+        meta={
+            "metrics": metrics,
+            "gpu_seconds": sub.gpu_seconds,
+            "estimated_cost_usd": sub.estimated_cost_usd,
+            "version": next_version,
+        },
+    )
+    db.commit()
+    db.refresh(sub)
+
+    # 完成後通知 QueueManager（修復 dispatcher 靜默鎖死 bug）
+    try:
+        from queue_manager import QueueManager
+        db2 = SessionLocal()
+        try:
+            QueueManager.mark_done_by_req(db2, sub.req_no)
+            db2.commit()
+        finally:
+            db2.close()
+    except Exception as _qe:
+        logger.warning("_on_kernel_complete: queue mark_done failed: %s", _qe)
+
+    await notify_event("training_complete", sub)
+
+
+def _append_training_failed_summary(db: Session, sub: Submission) -> None:
+    """
+    Sprint 19 C.1: 解析已下載的 output（若有），寫入含 partial metrics 的
+    training_failed_summary history，供前端顯示上次失敗的 mAP50。
+    """
+    parsed_map50 = None
+    completed_epochs = None
+    try:
+        dest = os.path.join(KAGGLE_DOWNLOAD_DIR, sub.req_no)
+        log_text = _read_log_files(dest)
+        if log_text:
+            parsed = parse_training_log(sub.arch or "yolov8m", log_text)
+            metrics = parsed.get("metrics", {}) or {}
+            parsed_map50 = metrics.get("map50")
+            completed_epochs = metrics.get("epochs")
+    except Exception as e:
+        logger.debug("_append_training_failed_summary parse failed: %s", e)
+
+    _append_history(
+        db,
+        req_no=sub.req_no,
+        action="training_failed_summary",
+        actor="kaggle-poller",
+        meta={
+            "partial_map50": parsed_map50,
+            "epochs": completed_epochs,
+            "verdict": "fail",
+        },
+        note=f"mAP50={parsed_map50 or 'N/A'}",
+    )
+
+
+async def _on_kernel_error(db: Session, sub: Submission, raw: str) -> None:
+    now = datetime.utcnow()
+    sub.kaggle_status = "error"
+    sub.kaggle_status_updated_at = now
+
+    retry_count = sub.retry_count or 0
+    max_retries = sub.max_retries if sub.max_retries is not None else 2
+
+    if retry_count < max_retries:
+        # Sprint 6.4: 自動重試。狀態保持 training，不通知失敗。
+        sub.retry_count = retry_count + 1
+        _append_history(
+            db,
+            req_no=sub.req_no,
+            action="training_retry",
+            note=(raw[:300] if raw else None),
+            meta={"retry_count": sub.retry_count, "max_retries": max_retries},
+        )
+        db.commit()
+        pushed = await _push_kernel(sub.kaggle_kernel_slug)
+        logger.info("auto-retry req=%s slug=%s push=%s",
+                    sub.req_no, sub.kaggle_kernel_slug, pushed)
+        # 下一輪 poll 會看到 queued/running，不在此通知
+        sub.kaggle_status = "queued"
+        db.commit()
+        return
+
+    # 已達上限 → 真 failed
+    sub.training_completed_at = now
+    sub.status = "failed"
+    if sub.training_started_at:
+        sub.gpu_seconds = int((now - sub.training_started_at).total_seconds())
+
+    _append_history(
+        db,
+        req_no=sub.req_no,
+        action="training_failed",
+        note=raw[:500] if raw else None,
+        meta={"retry_count": retry_count, "max_retries": max_retries},
+    )
+
+    # Sprint 19 C.1: 寫入失敗摘要 history（供前端顯示上次失敗的 mAP50）
+    # 嘗試從已下載的 output 解析 partial metrics
+    _append_training_failed_summary(db, sub)
+
+    db.commit()
+
+    # 真失敗（達重試上限）時通知 QueueManager（修復 dispatcher 靜默鎖死 bug）
+    try:
+        from queue_manager import QueueManager
+        db2 = SessionLocal()
+        try:
+            QueueManager.mark_failed_by_req(db2, sub.req_no, "kaggle training error")
+            db2.commit()
+        finally:
+            db2.close()
+    except Exception as _qe:
+        logger.warning("_on_kernel_error: queue mark_failed failed: %s", _qe)
+
+    await notify_event("training_failed", sub)
+
+
+async def _push_kernel(slug: str) -> bool:
+    """重新 push kernel（觸發重跑）— 需要 kaggle CLI + 本地 metadata。"""
+    import shutil
+    if not slug or not shutil.which("kaggle"):
+        return False
+    # 若先前沒 pull 過，先 pull 一次把 metadata 抓下來
+    dest = os.path.join(KAGGLE_DOWNLOAD_DIR, "retry", slug.replace("/", "_"))
+    Path(dest).mkdir(parents=True, exist_ok=True)
+    try:
+        p = await asyncio.create_subprocess_exec(
+            "kaggle", "kernels", "pull", slug, "-p", dest, "-m",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        await asyncio.wait_for(p.communicate(), timeout=60.0)
+        p = await asyncio.create_subprocess_exec(
+            "kaggle", "kernels", "push", "-p", dest,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await asyncio.wait_for(p.communicate(), timeout=60.0)
+        if p.returncode != 0:
+            logger.warning("kaggle push fail (slug=%s): %s",
+                           slug, stderr.decode(errors="replace"))
+            return False
+        return True
+    except Exception as e:
+        logger.warning("kaggle push exception (slug=%s): %s", slug, e)
+        return False
+
+
+async def _check_budget(db: Session, sub: Submission) -> None:
+    """Sprint 6.7: estimated_cost > max_budget 時一次性通知 CTO。"""
+    if sub.budget_exceeded_notified:
+        return
+    budget = sub.max_budget_usd or 0
+    if budget <= 0:
+        return
+
+    # 估算當下成本：start → now
+    if not sub.training_started_at:
+        return
+    elapsed_s = (datetime.utcnow() - sub.training_started_at).total_seconds()
+    # Sprint 15 P0-3: 免費配額時 cost=0，不會觸發預算超限
+    if not KAGGLE_IS_PAID_TIER:
+        return
+    current_cost = elapsed_s / 3600 * GPU_USD_PER_HOUR
+    if current_cost <= budget:
+        return
+    sub.budget_exceeded_notified = True
+    sub.estimated_cost_usd = round(current_cost, 4)
+    _append_history(
+        db, req_no=sub.req_no, action="budget_exceeded",
+        meta={"current_cost_usd": round(current_cost, 4), "max_budget_usd": budget},
+    )
+    db.commit()
+    try:
+        from notifications import notify, CTO_TARGET
+        await notify(
+            CTO_TARGET,
+            f"[ModelHub] 需求單 {sub.req_no} 訓練成本已超過預算上限 "
+            f"(${current_cost:.2f} / ${budget:.2f})，請確認是否繼續。"
+        )
+    except Exception:
+        pass
+
+
+async def _check_overtime(db: Session, sub: Submission) -> None:
+    if not sub.training_started_at:
+        return
+    elapsed = datetime.utcnow() - sub.training_started_at
+    if elapsed < timedelta(hours=OVERTIME_HOURS):
+        return
+    # 每 submission 只通知一次（用 history 判）
+    from models import SubmissionHistory
+    already = (
+        db.query(SubmissionHistory)
+        .filter(
+            SubmissionHistory.req_no == sub.req_no,
+            SubmissionHistory.action == "training_overtime",
+        )
+        .first()
+    )
+    if already:
+        return
+    _append_history(db, req_no=sub.req_no, action="training_overtime",
+                    meta={"elapsed_hours": elapsed.total_seconds() / 3600})
+    db.commit()
+    await notify_event("training_overtime", sub)
+
+
+async def _check_quota_warning(db: Session) -> None:
+    """
+    P1-2: Kaggle 配額預警。
+    剩 < 5h 且本週還沒發過預警時，寫 history + notify_event。
+    """
+    QUOTA_WARN_THRESHOLD = float(os.environ.get("KAGGLE_QUOTA_WARN_HOURS", "5"))
+    try:
+        from resources.prober import KaggleQuotaTracker
+        tracker = KaggleQuotaTracker()
+        remaining = tracker.get_remaining_hours(db)
+        if remaining >= QUOTA_WARN_THRESHOLD:
+            return
+
+        # 本週是否已發過預警（用 SubmissionHistory 記錄，req_no="__quota__"）
+        from models import SubmissionHistory
+        from datetime import timedelta
+        today = datetime.utcnow()
+        monday = today - timedelta(days=today.weekday())
+        week_start = monday.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        already = (
+            db.query(SubmissionHistory)
+            .filter(
+                SubmissionHistory.req_no == "__quota__",
+                SubmissionHistory.action == "kaggle_quota_warning",
+                SubmissionHistory.created_at >= week_start,
+            )
+            .first()
+        )
+        if already:
+            return
+
+        # 寫 history 防重複
+        row = SubmissionHistory(
+            req_no="__quota__",
+            action="kaggle_quota_warning",
+            actor="kaggle-poller",
+            note=f"本週剩餘配額 {remaining:.1f}h（低於 {QUOTA_WARN_THRESHOLD}h 閾值）",
+            meta=json.dumps({"remaining_hours": remaining, "threshold": QUOTA_WARN_THRESHOLD},
+                            ensure_ascii=False),
+        )
+        db.add(row)
+        db.commit()
+
+        # 通知（用 notify_event 的低階 notify 直接發給 CTO）
+        from notifications import notify, CTO_TARGET
+        await notify(
+            CTO_TARGET,
+            f"[ModelHub] Kaggle 配額預警：本週剩餘 {remaining:.1f} 小時，"
+            f"低於 {QUOTA_WARN_THRESHOLD}h 閾值，請注意配額用量。",
+        )
+        logger.warning("Kaggle quota warning sent: remaining=%.1fh", remaining)
+    except Exception as e:
+        logger.warning("_check_quota_warning failed: %s", e)
+
+
+async def poll_once() -> dict:
+    """掃一輪 status=training 的 submission"""
+    global _last_poll_at
+    _last_poll_at = datetime.utcnow()
+
+    if not _kaggle_env_ready():
+        logger.debug("KAGGLE_USERNAME/KAGGLE_KEY not set, skip poll")
+        return {"skipped": True}
+
+    api = _get_kaggle_api()
+    # 即使 api 取不到，subprocess 路徑仍可跑
+
+    db: Session = SessionLocal()
+    try:
+        # P1-2: 每次 poll 時檢查配額預警
+        await _check_quota_warning(db)
+
+        rows = db.query(Submission).filter(Submission.status == "training").all()
+        summary = {"checked": len(rows), "changed": 0, "complete": 0, "error": 0}
+
+        for sub in rows:
+            if not sub.kaggle_kernel_slug:
+                continue
+            await _check_overtime(db, sub)
+            await _check_budget(db, sub)
+            status_result = await _fetch_kernel_status(api, sub.kaggle_kernel_slug)
+            logger.debug(
+                "[poller] checking req_no=%s kaggle_status=%s → kaggle_api_status=%s",
+                sub.req_no, sub.kaggle_status,
+                status_result["status"] if status_result else "fetch_failed",
+            )
+            if not status_result:
+                continue
+            new_status = status_result["status"]
+            raw = status_result.get("raw", "")
+
+            if new_status != sub.kaggle_status:
+                summary["changed"] += 1
+                sub.kaggle_status = new_status
+                sub.kaggle_status_updated_at = datetime.utcnow()
+                _append_history(
+                    db, req_no=sub.req_no, action="kaggle_status_change",
+                    meta={"new_status": new_status},
+                )
+                db.commit()
+
+            # Sprint 19 B: complete 時強制觸發 _on_kernel_complete，
+            # 不管 kaggle_status 是否相同（幂等 guard 在 _on_kernel_complete 內）。
+            # 條件：new_status == "complete" 且 sub 尚未進入終態。
+            if new_status == "complete":
+                summary["complete"] += 1
+                if sub.status not in ("trained", "rejected", "accepted"):
+                    await _on_kernel_complete(db, sub)
+            elif new_status == "error":
+                summary["error"] += 1
+                await _on_kernel_error(db, sub, raw)
+
+        return summary
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Scheduler lifecycle（main.py 呼叫）
+# ---------------------------------------------------------------------------
+
+_scheduler = None
+_last_poll_at: Optional[datetime] = None
+
+
+def get_last_poll_at() -> Optional[datetime]:
+    return _last_poll_at
+
+
+def start_scheduler():
+    global _scheduler
+    try:
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    except ImportError:
+        logger.warning("apscheduler not installed, poller disabled")
+        return None
+
+    if _scheduler:
+        return _scheduler
+    _scheduler = AsyncIOScheduler(timezone="Asia/Taipei")
+    _scheduler.add_job(
+        poll_once, "interval",
+        seconds=POLL_INTERVAL_SECONDS,
+        id="kaggle-poller",
+        max_instances=1,
+        coalesce=True,
+    )
+    # 週報：每週一 09:00 Asia/Taipei
+    from .weekly_report import send_weekly_report
+    _scheduler.add_job(
+        send_weekly_report, "cron",
+        day_of_week="mon", hour=9, minute=0,
+        id="weekly-report",
+    )
+    _scheduler.start()
+    logger.info("Kaggle poller + weekly report scheduler started (interval=%ds)",
+                POLL_INTERVAL_SECONDS)
+    return _scheduler
+
+
+def stop_scheduler():
+    global _scheduler
+    if _scheduler:
+        _scheduler.shutdown(wait=False)
+        _scheduler = None
+        logger.info("Scheduler stopped")
