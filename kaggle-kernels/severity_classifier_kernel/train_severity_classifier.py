@@ -57,6 +57,17 @@ N_FOLDS = 5
 SEED = 42
 
 # ──────────────────────────────────────────────
+# Debug: list available input
+# ──────────────────────────────────────────────
+import os as _os
+print("=== /kaggle/input/ contents ===")
+for _d in sorted(_os.listdir("/kaggle/input")):
+    _dp = f"/kaggle/input/{_d}"
+    _files = _os.listdir(_dp) if _os.path.isdir(_dp) else []
+    print(f"  {_d}/: {_files[:5]}")
+print("=== end ===")
+
+# ──────────────────────────────────────────────
 # Load data
 # ──────────────────────────────────────────────
 print("Loading dataset...")

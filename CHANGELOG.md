@@ -1,5 +1,34 @@
 # Changelog — ModelHub
 
+## [0.6.2] — 2026-05-04 (Sprint 26-28)
+
+### Bug Fixes
+- **Sprint 26**：`GET /api/submissions/*` 和 `GET /api/registry/*` 改為接受 API Key（`CurrentUserOrApiKey`），讓機器對機器查詢無需 LIDS Bearer token
+- **Sprint 26**：`pytest.ini` 新增 `asyncio_default_fixture_loop_scope=function`，消除 PytestDeprecationWarning
+- **Sprint 26**：`lightning_poller.start_scheduler` 補充啟動時一次性 API Key 狀態說明
+- **Sprint 27**：`kaggle_poller._on_kernel_error` 幂等保護修正：terminal status 清單補入 `training_failed`（原只有 `failed`），修復 retry 耗盡後 status 未正確設為 `training_failed` 的 bug
+- **Sprint 27**：`lightning_poller._process_submission` 補充幂等保護
+- **Sprint 27**：新增 `TestOnKernelErrorIdempotent` 測試類（3 個測試）
+- **Sprint 28**：`kaggle_poller._append_training_failed_summary` 移除多餘 `actor` 參數，修復 `refresh-kaggle` endpoint 回 500 Internal Server Error 的問題
+- **Sprint 28**：`attach-kernel` endpoint 加入 `training_failed` 狀態允許，失敗後可直接 attach 新 kernel 重訓（自動 reset retry_count=0）
+
+### Tests
+- 222 tests passed (前 219 + 3 新增)
+
+---
+
+## [0.6.1] — 2026-05-02 (feat/m23-phase4 初版)
+
+### Sprint m23-phase4
+- **前端四模組**：Comments/Attachments/Notifications/ExternalModels 頁面完成
+- **Kaggle log fallback**：`##RESULT_JSON##` 標記機制，解決 result.json 無法下載問題
+- **SSH 訓練追溯欄位**：補充 SSH 訓練相關欄位
+- **Pydantic warnings**：消除 Pydantic v2 deprecation warnings
+- **MH-029 開訓**：Engineering OCR TrOCR v2 開始 Kaggle 訓練
+- 219 tests passed
+
+---
+
 ## [0.6.0] — 2026-04-18 (Sprint 20-24)
 
 ### Sprint 20 — 持久化訓練隊列（P0）
