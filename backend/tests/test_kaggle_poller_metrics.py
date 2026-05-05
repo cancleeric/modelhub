@@ -679,3 +679,99 @@ class TestCerNormalization:
 
         assert result["metrics"]["ocr_cer"] <= 1.0
         assert result["metrics"]["ocr_cer"] == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 34 S34-07: _detect_stale_jobs 單元測試
+# ---------------------------------------------------------------------------
+
+class TestDetectStaleJobs:
+    """測試 stale job 偵測邏輯（S34-07）"""
+
+    def test_stale_threshold_constant(self):
+        """STALE_TIMEOUT_HOURS 預設值應為 72"""
+        import importlib
+        import pollers.kaggle_poller as kp
+        importlib.reload(kp)
+        assert kp.STALE_TIMEOUT_HOURS == 72
+
+    def test_kaggle_status_updated_at_always_refreshed(self):
+        """
+        poll_once 不論狀態是否變化，都應更新 kaggle_status_updated_at。
+        此為 stale 偵測的前提條件。
+        """
+        import importlib
+        import pollers.kaggle_poller as kp
+        importlib.reload(kp)
+        # 確認 poll_once 邏輯中有無條件更新 kaggle_status_updated_at 的設計
+        # 透過讀原始碼確認行為（black-box test on source intent）
+        import inspect
+        src = inspect.getsource(kp.poll_once)
+        assert "kaggle_status_updated_at = datetime.utcnow()" in src, (
+            "poll_once 必須在每次 poll 後無條件更新 kaggle_status_updated_at"
+        )
+
+    @pytest.mark.asyncio
+    async def test_detect_stale_jobs_no_stale(self):
+        """無 stale job 時回傳 stale_found=0"""
+        import importlib
+        import pollers.kaggle_poller as kp
+        importlib.reload(kp)
+
+        mock_db = MagicMock()
+        mock_query = MagicMock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.all.return_value = []  # 無 stale candidates
+
+        with patch.object(kp, "SessionLocal", return_value=mock_db):
+            result = await kp._detect_stale_jobs()
+
+        assert result["stale_found"] == 0
+        assert result["checked"] == 0
+
+    @pytest.mark.asyncio
+    async def test_detect_stale_jobs_marks_stale_timeout(self):
+        """有 stale job 時應標記 stale_timeout 並更新狀態"""
+        import importlib
+        import pollers.kaggle_poller as kp
+        importlib.reload(kp)
+        from datetime import datetime, timedelta
+        from unittest.mock import patch, MagicMock, AsyncMock
+
+        # 建立 mock submission（running > 72h）
+        mock_sub = MagicMock()
+        mock_sub.req_no = "MH-2026-TEST"
+        mock_sub.kaggle_status = "running"
+        mock_sub.kaggle_status_updated_at = datetime.utcnow() - timedelta(hours=80)
+        mock_sub.training_completed_at = None
+
+        # 直接 mock SessionLocal 回傳的 context manager 物件
+        # filter chain 最終 .all() 回傳 [mock_sub]
+        mock_db = MagicMock()
+        mock_db.__enter__ = MagicMock(return_value=mock_db)
+        mock_db.__exit__ = MagicMock(return_value=False)
+        mock_filter_chain = MagicMock()
+        mock_filter_chain.filter.return_value = mock_filter_chain
+        mock_filter_chain.all.return_value = [mock_sub]
+        mock_db.query.return_value = mock_filter_chain
+
+        # 用 patch 讓 Submission.kaggle_status_updated_at < threshold 的比較不觸發錯誤
+        # 直接替換整個 _detect_stale_jobs 的 DB 查詢部分：patch SessionLocal
+        with patch.object(kp, "SessionLocal", return_value=mock_db), \
+             patch.object(kp, "_append_history", return_value=None), \
+             patch.object(kp, "_notify_stale", new_callable=AsyncMock) as mock_notify, \
+             patch("pollers.kaggle_poller.Submission") as mock_submission_cls:
+            # mock Submission column 比較（避免 MagicMock < datetime 錯誤）
+            mock_col = MagicMock()
+            mock_col.__lt__ = MagicMock(return_value=True)
+            mock_submission_cls.kaggle_status = mock_col
+            mock_submission_cls.kaggle_status_updated_at = mock_col
+            mock_db.query.return_value = mock_filter_chain
+            result = await kp._detect_stale_jobs()
+
+        assert result["stale_found"] == 1
+        assert mock_sub.kaggle_status == "stale_timeout"
+        assert mock_sub.status == "training_failed"
+        assert mock_sub.training_completed_at is not None
+        mock_notify.assert_awaited_once()

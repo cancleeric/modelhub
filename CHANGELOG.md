@@ -1,5 +1,28 @@
 # Changelog — ModelHub
 
+## [0.7.2] — 2026-05-05 (Sprint 34)
+
+### Model Lifecycle Updates
+- **MH-2026-025 FP Ranker v2 Promoted**：Shadow 期滿（7 天）→ Promote，AUC=0.814；submission status=deployed，model_version status=active
+- **MH-2026-026 Severity Classifier v4 Rejected**：accuracy=25.0% < 50% threshold，submission status=rejected，model_version notes 補記失敗原因
+- **MH-2026-030 Probe Quality Scorer 資料不足 Rejected**：補建 model_version v1（pass_fail=fail），notes=data_analysis_only，需 50+ samples 才可訓練
+
+### Aegis ML Pipeline
+- **MH-2026-031 Prompt Injection Classifier**：解除 blocked，attach Kaggle kernel `boardgamegroup/aegis-prompt-injection-classifier`，status=training
+- **MH-2026-032 Code Vulnerability Detector**：解除 blocked，attach Kaggle kernel `boardgamegroup/aegis-code-vuln-detector`，status=training
+- **MH-2026-034 LLM Output Toxicity Classifier**：新增 submission 登記，status=pending（待建 Kaggle dataset），kernel stub 建立於 `kaggle-kernels/aegis-llm-output-toxicity/`
+
+### Bug Fix & Enhancement
+- **Kaggle stale job 偵測（S34-07）**：`kaggle_poller._detect_stale_jobs()` — 查 `kaggle_status=running` 且 `kaggle_status_updated_at < NOW()-72h` 的 submission，自動標記 `stale_timeout`，通知 CTO；排程每 6 小時執行
+- **`poll_once` 每次 poll 後無條件更新 `kaggle_status_updated_at`**：不論狀態是否變化，確保 stale 偵測有準確時間戳記
+- **新增環境變數 `MODELHUB_KAGGLE_STALE_TIMEOUT_HOURS`**（預設 72）
+
+### Tests
+- 新增 `TestDetectStaleJobs`（4 tests）：stale 常數驗證、`kaggle_status_updated_at` 無條件更新驗證、無 stale job 回傳 0、stale job 正確標記 stale_timeout
+- 212 passed（含新增 4 tests）
+
+---
+
 ## [0.7.1] — 2026-05-04 (Sprint 33)
 
 ### New Features

@@ -1,6 +1,8 @@
 FROM python:3.11-slim
 WORKDIR /app
 COPY requirements.txt .
+# 先裝 CPU-only torch，避免 ultralytics 拉 CUDA wheels（~4GB+）
+RUN pip install --no-cache-dir torch torchvision --extra-index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 

@@ -7,6 +7,7 @@ __pycache__/
 .venv/
 venv/
 *.db
+*.db.bak*
 
 # Logs
 logs/*.log
