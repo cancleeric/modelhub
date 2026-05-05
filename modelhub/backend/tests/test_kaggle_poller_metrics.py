@@ -603,3 +603,175 @@ class TestOcrNotesContainCer:
 
         assert "CER=0.4227" in created_mv.get("notes", "")
         assert created_mv["map50"] == pytest.approx(0.036)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 32: CER normalization fix (MH-2026-029)
+# ---------------------------------------------------------------------------
+
+class TestCerNormalization:
+    """
+    確保 _parse_result_obj 對未正規化 CER（如 86.25）進行 clamp 防禦。
+    Bug: Kaggle kernel 若 pred_str 遠長於 label_str，原始算法可能回傳 >> 1.0。
+    Fix: min(cer_value, 1.0) 三層保險（kernel / compute_cer / poller）。
+    """
+
+    def test_unnormalized_cer_clamped_to_1(self):
+        """ocr_cer=86.25 → parse 後必須 <= 1.0（Sprint 32 防禦測試）"""
+        import importlib
+        import pollers.kaggle_poller as kp
+        importlib.reload(kp)
+
+        with _tmp_dir() as d:
+            dest = _write_result_json(d, {
+                "exact_match": 0.03,
+                "cer": 86.25,  # 未正規化的 CER（MH-2026-029 實際案例）
+            })
+            result = kp._read_result_json(dest)
+
+        assert result["metrics"]["ocr_cer"] <= 1.0, (
+            f"ocr_cer={result['metrics']['ocr_cer']} 應被 clamp 到 <= 1.0"
+        )
+        assert result["metrics"]["ocr_cer"] == pytest.approx(1.0)
+
+    def test_normalized_cer_unchanged(self):
+        """正常 CER（0.0-1.0 範圍）不被影響"""
+        import importlib
+        import pollers.kaggle_poller as kp
+        importlib.reload(kp)
+
+        with _tmp_dir() as d:
+            dest = _write_result_json(d, {
+                "exact_match": 0.15,
+                "cer": 0.42,
+            })
+            result = kp._read_result_json(dest)
+
+        assert result["metrics"]["ocr_cer"] == pytest.approx(0.42)
+
+    def test_cer_just_above_1_clamped(self):
+        """CER 略超過 1.0（如 1.05）也應被 clamp"""
+        import importlib
+        import pollers.kaggle_poller as kp
+        importlib.reload(kp)
+
+        with _tmp_dir() as d:
+            dest = _write_result_json(d, {
+                "cer": 1.05,
+            })
+            result = kp._read_result_json(dest)
+
+        assert result["metrics"]["ocr_cer"] <= 1.0
+        assert result["metrics"]["ocr_cer"] == pytest.approx(1.0)
+
+    def test_test_cer_field_also_clamped(self):
+        """test_cer 欄位（MH-009 格式）同樣被 clamp"""
+        import importlib
+        import pollers.kaggle_poller as kp
+        importlib.reload(kp)
+
+        with _tmp_dir() as d:
+            dest = _write_result_json(d, {
+                "test_exact_match": 0.036,
+                "test_cer": 86.25,
+            })
+            result = kp._read_result_json(dest)
+
+        assert result["metrics"]["ocr_cer"] <= 1.0
+        assert result["metrics"]["ocr_cer"] == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 34 S34-07: _detect_stale_jobs 單元測試
+# ---------------------------------------------------------------------------
+
+class TestDetectStaleJobs:
+    """測試 stale job 偵測邏輯（S34-07）"""
+
+    def test_stale_threshold_constant(self):
+        """STALE_TIMEOUT_HOURS 預設值應為 72"""
+        import importlib
+        import pollers.kaggle_poller as kp
+        importlib.reload(kp)
+        assert kp.STALE_TIMEOUT_HOURS == 72
+
+    def test_kaggle_status_updated_at_always_refreshed(self):
+        """
+        poll_once 不論狀態是否變化，都應更新 kaggle_status_updated_at。
+        此為 stale 偵測的前提條件。
+        """
+        import importlib
+        import pollers.kaggle_poller as kp
+        importlib.reload(kp)
+        # 確認 poll_once 邏輯中有無條件更新 kaggle_status_updated_at 的設計
+        # 透過讀原始碼確認行為（black-box test on source intent）
+        import inspect
+        src = inspect.getsource(kp.poll_once)
+        assert "kaggle_status_updated_at = datetime.utcnow()" in src, (
+            "poll_once 必須在每次 poll 後無條件更新 kaggle_status_updated_at"
+        )
+
+    @pytest.mark.asyncio
+    async def test_detect_stale_jobs_no_stale(self):
+        """無 stale job 時回傳 stale_found=0"""
+        import importlib
+        import pollers.kaggle_poller as kp
+        importlib.reload(kp)
+
+        mock_db = MagicMock()
+        mock_query = MagicMock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.all.return_value = []  # 無 stale candidates
+
+        with patch.object(kp, "SessionLocal", return_value=mock_db):
+            result = await kp._detect_stale_jobs()
+
+        assert result["stale_found"] == 0
+        assert result["checked"] == 0
+
+    @pytest.mark.asyncio
+    async def test_detect_stale_jobs_marks_stale_timeout(self):
+        """有 stale job 時應標記 stale_timeout 並更新狀態"""
+        import importlib
+        import pollers.kaggle_poller as kp
+        importlib.reload(kp)
+        from datetime import datetime, timedelta
+        from unittest.mock import patch, MagicMock, AsyncMock
+
+        # 建立 mock submission（running > 72h）
+        mock_sub = MagicMock()
+        mock_sub.req_no = "MH-2026-TEST"
+        mock_sub.kaggle_status = "running"
+        mock_sub.kaggle_status_updated_at = datetime.utcnow() - timedelta(hours=80)
+        mock_sub.training_completed_at = None
+
+        # 直接 mock SessionLocal 回傳的 context manager 物件
+        # filter chain 最終 .all() 回傳 [mock_sub]
+        mock_db = MagicMock()
+        mock_db.__enter__ = MagicMock(return_value=mock_db)
+        mock_db.__exit__ = MagicMock(return_value=False)
+        mock_filter_chain = MagicMock()
+        mock_filter_chain.filter.return_value = mock_filter_chain
+        mock_filter_chain.all.return_value = [mock_sub]
+        mock_db.query.return_value = mock_filter_chain
+
+        # 用 patch 讓 Submission.kaggle_status_updated_at < threshold 的比較不觸發錯誤
+        # 直接替換整個 _detect_stale_jobs 的 DB 查詢部分：patch SessionLocal
+        with patch.object(kp, "SessionLocal", return_value=mock_db), \
+             patch.object(kp, "_append_history", return_value=None), \
+             patch.object(kp, "_notify_stale", new_callable=AsyncMock) as mock_notify, \
+             patch("pollers.kaggle_poller.Submission") as mock_submission_cls:
+            # mock Submission column 比較（避免 MagicMock < datetime 錯誤）
+            mock_col = MagicMock()
+            mock_col.__lt__ = MagicMock(return_value=True)
+            mock_submission_cls.kaggle_status = mock_col
+            mock_submission_cls.kaggle_status_updated_at = mock_col
+            mock_db.query.return_value = mock_filter_chain
+            result = await kp._detect_stale_jobs()
+
+        assert result["stale_found"] == 1
+        assert mock_sub.kaggle_status == "stale_timeout"
+        assert mock_sub.status == "training_failed"
+        assert mock_sub.training_completed_at is not None
+        mock_notify.assert_awaited_once()

@@ -22,11 +22,14 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
+import urllib.request
+import urllib.error
+
 from sqlalchemy.orm import Session
 
 from models import SessionLocal, Submission, ModelVersion
 from parsers import parse_training_log
-from notifications import notify_event
+from notifications import notify_event, notify, CTO_TARGET
 from utils import next_version_for as _next_version_for, read_log_files as _read_log_files
 
 logger = logging.getLogger("modelhub.poller.kaggle")
@@ -174,7 +177,9 @@ def _parse_result_obj(obj: dict) -> dict:
     if exact_match is not None and "map50" not in metrics:
         metrics["map50"] = float(exact_match)
     if cer is not None:
-        metrics["ocr_cer"] = float(cer)
+        # Sprint 32 CER normalization fix (MH-2026-029)：防禦性 clamp，
+        # 若 Kaggle kernel 回傳未正規化的 CER（如 86.25），強制壓回 [0, 1]
+        metrics["ocr_cer"] = min(float(cer), 1.0)
 
     return {"metrics": metrics, "per_class": per_class or None}
 
@@ -409,6 +414,88 @@ async def _on_kernel_complete(db: Session, sub: Submission) -> None:
         logger.warning("_on_kernel_complete: queue mark_done failed: %s", _qe)
 
     await notify_event("training_complete", sub)
+
+    # Sprint 33: pass_fail=pass 時自動驗收
+    if pass_fail == "pass":
+        await _auto_accept(
+            req_no=sub.req_no,
+            map50_actual=map50_val,
+            map50_95_actual=metrics.get("map50_95"),
+            notes=mv_notes,
+        )
+        # 自動驗收後通知 CTO
+        await _notify_auto_accept(sub.req_no, map50_val)
+
+
+async def _auto_accept(
+    req_no: str,
+    map50_actual: Optional[float],
+    map50_95_actual: Optional[float],
+    notes: Optional[str],
+) -> None:
+    """
+    Sprint 33 P0: Kaggle 訓練 pass 後自動打 accept_version API。
+    使用 urllib（標準庫）避免引入額外依賴。
+    失敗時只 log warning，不拋出 exception。
+    """
+    base_url = os.environ.get("MODELHUB_BASE_URL", "http://localhost:8000")
+    api_key = os.environ.get("MODELHUB_API_KEY", "")
+
+    # 先查詢 ModelVersion ID（最新一筆 pending_acceptance）
+    try:
+        list_url = f"{base_url}/api/registry/?req_no={req_no}&status=pending_acceptance"
+        req = urllib.request.Request(list_url, headers={"X-Api-Key": api_key})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            versions = json.loads(resp.read())
+        if not versions:
+            logger.warning("_auto_accept: no pending_acceptance version found for %s", req_no)
+            return
+        # 取最新一筆（回傳已按 created_at desc 排序）
+        mv_id = versions[0]["id"]
+    except Exception as e:
+        logger.warning("_auto_accept: failed to list versions for %s: %s", req_no, e)
+        return
+
+    # 打 accept API
+    accept_url = f"{base_url}/api/registry/{mv_id}/accept"
+    body = json.dumps({
+        "accepted_by": "kaggle_poller",
+        "acceptance_note": f"自動驗收 pass_fail=pass; {notes or ''}".strip("; "),
+        "map50_actual": map50_actual,
+        "map50_95_actual": map50_95_actual,
+        "pass_fail": "pass",
+    }).encode()
+    try:
+        req = urllib.request.Request(
+            accept_url,
+            data=body,
+            method="POST",
+            headers={"X-Api-Key": api_key, "Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
+        logger.info(
+            "_auto_accept: req=%s mv_id=%d accepted (map50_actual=%s, status=%s)",
+            req_no, mv_id, map50_actual, result.get("status"),
+        )
+    except Exception as e:
+        logger.warning("_auto_accept: accept POST failed for %s mv_id=%s: %s", req_no, mv_id, e)
+
+
+async def _notify_auto_accept(req_no: str, map50_actual: Optional[float]) -> None:
+    """
+    Sprint 33 P0: 自動驗收後透過 notify（CMC）發送通知給 CTO。
+    靜默失敗，不影響主流程。
+    """
+    try:
+        msg = (
+            f"[MH] {req_no} 訓練完成並自動驗收\n"
+            f"mAP50={map50_actual}, pass_fail=pass"
+        )
+        await notify(CTO_TARGET, msg)
+        logger.info("_notify_auto_accept: notification sent for %s", req_no)
+    except Exception as e:
+        logger.warning("_notify_auto_accept: failed for %s: %s", req_no, e)
 
 
 def _append_training_failed_summary(db: Session, sub: Submission) -> None:
@@ -655,6 +742,75 @@ async def _check_quota_warning(db: Session) -> None:
         logger.warning("_check_quota_warning failed: %s", e)
 
 
+STALE_TIMEOUT_HOURS = int(os.environ.get("MODELHUB_KAGGLE_STALE_TIMEOUT_HOURS", "72"))
+
+
+async def _notify_stale(req_no: str, stale_hours: float) -> None:
+    """通知 CTO 有 stale job。靜默失敗。"""
+    try:
+        msg = (
+            f"[ModelHub] {req_no} Kaggle 訓練 stale 逾時\n"
+            f"kaggle_status=running 超過 {stale_hours:.1f}h 無更新，已標記 stale_timeout。"
+        )
+        await notify(CTO_TARGET, msg)
+        logger.warning("_notify_stale: notification sent for %s (%.1fh)", req_no, stale_hours)
+    except Exception as e:
+        logger.warning("_notify_stale: failed for %s: %s", req_no, e)
+
+
+async def _detect_stale_jobs() -> dict:
+    """
+    Sprint 34 S34-07: stale job 偵測。
+    查 submissions 表，kaggle_status=running 且 kaggle_status_updated_at < NOW()-72h
+    → 更新 kaggle_status=stale_timeout、status=training_failed，並通知 CTO。
+    每 6 小時執行一次（由 start_scheduler 排程）。
+    """
+    db: Session = SessionLocal()
+    stale_threshold = datetime.utcnow() - timedelta(hours=STALE_TIMEOUT_HOURS)
+    summary = {"checked": 0, "stale_found": 0}
+    try:
+        candidates = (
+            db.query(Submission)
+            .filter(
+                Submission.kaggle_status == "running",
+                Submission.kaggle_status_updated_at < stale_threshold,
+            )
+            .all()
+        )
+        summary["checked"] = len(candidates)
+        for sub in candidates:
+            elapsed_hours = (
+                datetime.utcnow() - sub.kaggle_status_updated_at
+            ).total_seconds() / 3600
+            logger.warning(
+                "_detect_stale_jobs: req=%s stale %.1fh (threshold=%dh), marking stale_timeout",
+                sub.req_no, elapsed_hours, STALE_TIMEOUT_HOURS,
+            )
+            now = datetime.utcnow()
+            sub.kaggle_status = "stale_timeout"
+            sub.kaggle_status_updated_at = now
+            sub.status = "training_failed"
+            if not sub.training_completed_at:
+                sub.training_completed_at = now
+            _append_history(
+                db,
+                req_no=sub.req_no,
+                action="kaggle_stale_timeout",
+                meta={"elapsed_hours": round(elapsed_hours, 1), "threshold_hours": STALE_TIMEOUT_HOURS},
+                note=f"kaggle_status=running for {elapsed_hours:.1f}h, auto-marked stale_timeout",
+            )
+            db.commit()
+            summary["stale_found"] += 1
+            await _notify_stale(sub.req_no, elapsed_hours)
+        logger.info("_detect_stale_jobs: checked=%d stale_found=%d", summary["checked"], summary["stale_found"])
+        return summary
+    except Exception as e:
+        logger.warning("_detect_stale_jobs error: %s", e)
+        return summary
+    finally:
+        db.close()
+
+
 async def poll_once() -> dict:
     """掃一輪 status=training 的 submission"""
     global _last_poll_at
@@ -691,15 +847,16 @@ async def poll_once() -> dict:
             new_status = status_result["status"]
             raw = status_result.get("raw", "")
 
+            # Sprint 34 S34-07: 每次 poll 後都更新 kaggle_status_updated_at（stale 偵測依此欄位判斷）
             if new_status != sub.kaggle_status:
                 summary["changed"] += 1
                 sub.kaggle_status = new_status
-                sub.kaggle_status_updated_at = datetime.utcnow()
                 _append_history(
                     db, req_no=sub.req_no, action="kaggle_status_change",
                     meta={"new_status": new_status},
                 )
-                db.commit()
+            sub.kaggle_status_updated_at = datetime.utcnow()
+            db.commit()
 
             # Sprint 19 B: complete 時強制觸發 _on_kernel_complete，
             # 不管 kaggle_status 是否相同（幂等 guard 在 _on_kernel_complete 內）。
@@ -747,6 +904,14 @@ def start_scheduler():
         max_instances=1,
         coalesce=True,
     )
+    # Sprint 34 S34-07: stale job 偵測，每 6 小時執行一次
+    _scheduler.add_job(
+        _detect_stale_jobs, "interval",
+        hours=6,
+        id="stale-job-detector",
+        max_instances=1,
+        coalesce=True,
+    )
     # 週報：每週一 09:00 Asia/Taipei
     from .weekly_report import send_weekly_report
     _scheduler.add_job(
@@ -755,8 +920,8 @@ def start_scheduler():
         id="weekly-report",
     )
     _scheduler.start()
-    logger.info("Kaggle poller + weekly report scheduler started (interval=%ds)",
-                POLL_INTERVAL_SECONDS)
+    logger.info("Kaggle poller + weekly report scheduler started (interval=%ds, stale_timeout=%dh)",
+                POLL_INTERVAL_SECONDS, STALE_TIMEOUT_HOURS)
     return _scheduler
 
 
