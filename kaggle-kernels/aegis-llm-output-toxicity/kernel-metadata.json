@@ -1,0 +1,15 @@
+{
+  "id": "boardgamegroup/aegis-llm-output-toxicity-classifier",
+  "title": "Aegis LLM Output Toxicity Classifier (MH-2026-034)",
+  "code_file": "train.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": false,
+  "dataset_sources": [
+    "boardgamegroup/aegis-llm-toxicity-dataset"
+  ],
+  "competition_sources": [],
+  "kernel_sources": []
+}
