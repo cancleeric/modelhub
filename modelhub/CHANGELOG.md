@@ -1,5 +1,46 @@
 # Changelog — ModelHub
 
+## [0.7.2] — 2026-05-05 (Sprint 34)
+
+### Model Lifecycle Updates
+- **MH-2026-025 FP Ranker v2 Promoted**：Shadow 期滿（7 天）→ Promote，AUC=0.814；submission status=deployed，model_version status=active
+- **MH-2026-026 Severity Classifier v4 Rejected**：accuracy=25.0% < 50% threshold，submission status=rejected，model_version notes 補記失敗原因
+- **MH-2026-030 Probe Quality Scorer 資料不足 Rejected**：補建 model_version v1（pass_fail=fail），notes=data_analysis_only，需 50+ samples 才可訓練
+
+### Aegis ML Pipeline
+- **MH-2026-031 Prompt Injection Classifier**：解除 blocked，attach Kaggle kernel `boardgamegroup/aegis-prompt-injection-classifier`，status=training
+- **MH-2026-032 Code Vulnerability Detector**：解除 blocked，attach Kaggle kernel `boardgamegroup/aegis-code-vuln-detector`，status=training
+- **MH-2026-034 LLM Output Toxicity Classifier**：新增 submission 登記，status=pending（待建 Kaggle dataset），kernel stub 建立於 `kaggle-kernels/aegis-llm-output-toxicity/`
+
+### Bug Fix & Enhancement
+- **Kaggle stale job 偵測（S34-07）**：`kaggle_poller._detect_stale_jobs()` — 查 `kaggle_status=running` 且 `kaggle_status_updated_at < NOW()-72h` 的 submission，自動標記 `stale_timeout`，通知 CTO；排程每 6 小時執行
+- **`poll_once` 每次 poll 後無條件更新 `kaggle_status_updated_at`**：不論狀態是否變化，確保 stale 偵測有準確時間戳記
+- **新增環境變數 `MODELHUB_KAGGLE_STALE_TIMEOUT_HOURS`**（預設 72）
+
+### Tests
+- 新增 `TestDetectStaleJobs`（4 tests）：stale 常數驗證、`kaggle_status_updated_at` 無條件更新驗證、無 stale job 回傳 0、stale job 正確標記 stale_timeout
+- 212 passed（含新增 4 tests）
+
+---
+
+## [0.7.1] — 2026-05-04 (Sprint 33)
+
+### New Features
+- **Kaggle 自動驗收（P0）**：`kaggle_poller._auto_accept()` — kernel complete 且 `pass_fail=pass` 時，自動打 `POST /api/registry/{mv_id}/accept`，並透過 CMC 通知 CTO
+- **輕量 Kaggle 狀態 Endpoint**：`GET /api/submissions/{req_no}/kaggle-status`（`submissions.py`）— 無需 auth，只查 DB，回傳 `req_no/kaggle_status/kaggle_status_updated_at/kaggle_kernel_slug`
+- **前端 Kaggle Tab Auto-refresh**：`SubmissionDetailPage.tsx` — `kaggle_status=running` 且在 kaggle tab 時，每 30 秒打輕量 endpoint 更新顯示；`complete` 或 `error` 時停止 polling 並 invalidate 主查詢
+
+---
+
+## [0.7.0] — 2026-05-04 (Sprint 32)
+
+### Bug Fixes
+- **MH-2026-029 CER normalization fix（P0）**：`kaggle_poller._parse_result_obj()` 新增防禦性 clamp，確保 `ocr_cer` 回傳值 <= 1.0；修復 Kaggle kernel 未正規化 CER（如 86.25）導致指標異常的問題
+- **kaggle-kernels/ocr_v2_kernel/train_kaggle.py** `compute_cer()` 尾端加 `min(cer_value, 1.0)` clamp，從 kernel 端防止產生超界 CER
+
+### Tests
+- 新增 `TestCerNormalization`（4 tests）：覆蓋 86.25 未正規化 CER、正常範圍不影響、略超 1.0 情境、`test_cer` 欄位同樣被 clamp
+
 ## [0.6.3] — 2026-05-04 (Sprint 29-31)
 
 ### New Features
