@@ -1,0 +1,15 @@
+{
+  "id": "boardgamegroup/aegis-code-vuln-detector",
+  "title": "Aegis Code Vulnerability Detector (MH-2026-032)",
+  "code_file": "train.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": false,
+  "dataset_sources": [
+    "boardgamegroup/aegis-code-vulnerability-dataset"
+  ],
+  "competition_sources": [],
+  "kernel_sources": []
+}

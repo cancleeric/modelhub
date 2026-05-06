@@ -215,6 +215,16 @@ for fold_idx, (tr_idx, val_idx) in enumerate(skf.split(X_arr, y_train_full)):
     y_tr, y_val = y_train_full[tr_idx], y_train_full[val_idx]
     sw_tr = sample_weights_train[tr_idx]
 
+    # XGBoost (sklearn API) requires y labels to be 0-based contiguous integers.
+    # With CRITICAL=1 sample some folds have y_tr ∈ {1,2,3,4} instead of {0,1,2,3}.
+    # Fix: remap y_tr/y_val to contiguous 0-based within this fold, then inverse-map
+    # predictions back to global label space for consistent accuracy/f1.
+    fold_classes = np.unique(y_tr)                       # sorted unique labels in this fold's train
+    fold_map = {orig: new for new, orig in enumerate(fold_classes)}   # global → fold-local
+    inv_fold_map = {new: orig for orig, new in fold_map.items()}       # fold-local → global
+    y_tr_local = np.array([fold_map[lbl] for lbl in y_tr])
+    fold_num_class = len(fold_classes)
+
     xgb_fold = XGBClassifier(
         n_estimators=200,
         max_depth=6,
@@ -225,13 +235,27 @@ for fold_idx, (tr_idx, val_idx) in enumerate(skf.split(X_arr, y_train_full)):
         random_state=SEED,
         n_jobs=-1,
         objective="multi:softprob",
-        num_class=len(classes),
+        num_class=fold_num_class,
     )
-    xgb_fold.fit(X_tr, y_tr, sample_weight=sw_tr)
-    y_pred = xgb_fold.predict(X_val)
+    xgb_fold.fit(X_tr, y_tr_local, sample_weight=sw_tr)
+    y_pred_local = xgb_fold.predict(X_val)
+    # Inverse-map fold predictions back to global label space
+    y_pred = np.array([inv_fold_map.get(p, -1) for p in y_pred_local])
 
-    acc = accuracy_score(y_val, y_pred)
-    f1 = f1_score(y_val, y_pred, average="weighted", zero_division=0)
+    # Evaluate only on val samples whose true label IS in fold_classes
+    # (labels missing from train can't be predicted; we treat them as OOV)
+    valid_mask = np.isin(y_val, fold_classes)
+    y_val_eval = y_val[valid_mask]
+    y_pred_eval = y_pred[valid_mask]
+
+    if len(y_val_eval) == 0:
+        fold_accuracies.append(0.0)
+        fold_f1s.append(0.0)
+        print(f"  Fold {fold_idx + 1}: skipped (all val samples OOV)")
+        continue
+
+    acc = accuracy_score(y_val_eval, y_pred_eval)
+    f1 = f1_score(y_val_eval, y_pred_eval, average="weighted", zero_division=0)
     fold_accuracies.append(acc)
     fold_f1s.append(f1)
     print(f"  Fold {fold_idx + 1}: accuracy={acc:.4f}, f1_weighted={f1:.4f}")
@@ -303,9 +327,14 @@ if len(y_ho_valid) > 0:
     y_ho_pred = xgb.predict(X_ho_valid.toarray())
     holdout_accuracy = accuracy_score(y_ho_valid, y_ho_pred)
     holdout_f1 = f1_score(y_ho_valid, y_ho_pred, average="weighted", zero_division=0)
+    # Use labels= to restrict to classes present in y_ho_valid; avoid mismatch with
+    # target_names when CRITICAL (or other rare class) is absent from holdout set.
+    ho_present_labels = sorted(set(y_ho_valid) | set(y_ho_pred))
+    ho_target_names = [classes[i] for i in ho_present_labels]
     holdout_report = classification_report(
         y_ho_valid, y_ho_pred,
-        target_names=classes,
+        labels=ho_present_labels,
+        target_names=ho_target_names,
         output_dict=True,
         zero_division=0,
     )

@@ -1,0 +1,15 @@
+{
+  "id": "boardgamegroup/aegis-prompt-injection-classifier",
+  "title": "Aegis Prompt Injection Classifier (MH-2026-031)",
+  "code_file": "train.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": false,
+  "dataset_sources": [
+    "boardgamegroup/aegis-prompt-injection-dataset"
+  ],
+  "competition_sources": [],
+  "kernel_sources": []
+}

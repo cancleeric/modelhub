@@ -62,3 +62,15 @@ kaggle.json
 .env
 .env.*
 *.env
+.DS_Store
+.playwright-mcp/
+wiki-verify-*.png
+*.jpeg
+after-click.png
+chat-*.png
+hs_website_check.png
+widget-*.png
+website-home.jpeg
+wiki-verify-*.png
+README.md.local
+yolov8m.pt
